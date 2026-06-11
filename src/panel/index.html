@@ -507,6 +507,10 @@
                 <select v-model="selectedResolution" class="truncate-text"
                     style="background:#555; color:#fff; border:1px solid #777; padding:3px; outline:none; border-radius:3px; flex: 1;">
                     <option value="FIT">自动充满 (Fit Window)</option>
+                    <optgroup label="自定义">
+                        <option value="720x1080">自定义 (1080x720)</option>
+                        <option value="720x720">自定义 (720x720)</option>
+                    </optgroup>
                     <optgroup label="iOS/iPadOS 阵营">
                         <option value="1290x2796">iPhone 16 Pro Max/15 Pro Max (2796x1290)</option>
                         <option value="1206x2622">iPhone 16 Pro (2622x1206)</option>
@@ -525,8 +529,6 @@
                         <option value="1440x3120">中兴Axon 60 Ultra/全面屏 (3120x1440)</option>
                         <option value="1240x2772">主流1.5K中端标杆 (2772x1240)</option>
                         <option value="720x1600">入门机基准下限测试 (1600x720)</option>
-                        <option value="720x1280">HD 竖屏基准 (1280x720)</option>
-                        <option value="720x1080">HD+ 竖屏基准 (1080x720)</option>
                     </optgroup>
                     <optgroup label="折叠屏全形态">
                         <option value="1080x2440">华为Mate X6 (外屏 2440x1080)</option>
