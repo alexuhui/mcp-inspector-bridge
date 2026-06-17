@@ -27,9 +27,9 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
             if (msg.type === 'callTool') {
                 try {
                     const result = await this.bridge.callTool(msg.name, msg.args || {});
-                    webviewView.webview.postMessage({ type: 'toolResult', id: msg.id, result });
+                    webviewView.webview.postMessage({ type: 'toolResult', id: msg.id, name: msg.name, result });
                 } catch (e: any) {
-                    webviewView.webview.postMessage({ type: 'toolError', id: msg.id, error: e.message });
+                    webviewView.webview.postMessage({ type: 'toolError', id: msg.id, name: msg.name, error: e.message });
                 }
             } else if (msg.type === 'refresh') {
                 this.refresh(webviewView);
@@ -43,12 +43,14 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
             const preferredPort = config.get<number>('bridgePort') || 0;
             await this.bridge.connect(preferredPort);
             const info = await this.bridge.getPreviewInfo();
+            const useProbeProxy = config.get<boolean>('useProbeProxy') === true;
+            const previewSrc = (useProbeProxy && info.probeProxyUrl) ? info.probeProxyUrl : info.previewUrl;
 
             this.bridge.subscribe((event) => {
                 webviewView.webview.postMessage({ type: 'bridgeEvent', event });
             });
 
-            webviewView.webview.html = this.getPanelHtml(info);
+            webviewView.webview.html = this.getPanelHtml({ ...info, previewUrl: previewSrc }, useProbeProxy);
         } catch (e: any) {
             webviewView.webview.html = this.getErrorHtml(e.message);
         }
@@ -79,8 +81,11 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
 </body></html>`;
     }
 
-    private getPanelHtml(info: { previewUrl: string; projectName: string; bridgePort: number; hasPreview: boolean }): string {
+    private getPanelHtml(info: { previewUrl: string; projectName: string; bridgePort: number; hasPreview: boolean; probeProxyUrl?: string | null }, useProbeProxy = false): string {
         const previewSrc = info.previewUrl;
+        const modeHint = useProbeProxy && info.probeProxyUrl
+            ? `<span style="color:#dcdcaa;font-size:11px">代理预览</span>`
+            : '';
         return `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8">
@@ -109,6 +114,7 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   <header>
     <span class="status">● ${info.projectName}</span>
     <span>Bridge :${info.bridgePort}</span>
+    ${modeHint}
     <button onclick="loadTree()">刷新节点树</button>
     <button onclick="vscode.postMessage({type:'refresh'})">重连</button>
   </header>
@@ -128,9 +134,15 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   <script>
     const vscode = acquireVsCodeApi();
     let selectedUuid = '';
+    let treeData = null;
+    let detailText = '选中节点查看属性';
+    let requestSeq = 0;
+    const pendingTools = {};
 
     function loadTree() {
-      const id = Date.now().toString();
+      const id = String(++requestSeq);
+      pendingTools[id] = 'get_node_tree';
+      document.getElementById('tree').textContent = '加载中...';
       vscode.postMessage({ type: 'callTool', id, name: 'get_node_tree', args: { depth: 8 } });
     }
 
@@ -182,24 +194,55 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
       return data;
     }
 
-    function applyTreeToDom(tree) {
-      const root = unwrapTree(tree);
-      if (!root || typeof root !== 'object') {
-        document.getElementById('tree').textContent = '（无节点树数据）';
+    function isLikelyFullTree(node) {
+      if (!node || typeof node !== 'object') return false;
+      if (node.isScene) return true;
+      if (node.name === 'Scene' || node.name === 'Main') return true;
+      return false;
+    }
+
+    function renderTreePanel() {
+      const treeEl = document.getElementById('tree');
+      if (!treeData) {
+        treeEl.textContent = '（无节点树数据）';
         return;
       }
-      document.getElementById('tree').innerHTML = renderTree(root);
+      treeEl.innerHTML = renderTree(treeData);
+      bindTreeNodeClicks();
+      if (selectedUuid) {
+        const sel = treeEl.querySelector('.node[data-uuid="' + selectedUuid + '"]');
+        if (sel) sel.style.background = '#37373d';
+      }
+    }
+
+    function renderDetailPanel() {
+      document.getElementById('detail').textContent = detailText;
+    }
+
+    function bindTreeNodeClicks() {
       document.querySelectorAll('.node[data-uuid]').forEach(el => {
         el.onclick = () => {
           selectedUuid = el.dataset.uuid;
-          document.getElementById('tab-detail').click();
-          const rid = Date.now().toString();
-          vscode.postMessage({ type: 'callTool', id: rid, name: 'get_node_detail', args: { uuid: selectedUuid } });
+          detailText = '加载属性中...';
+          renderDetailPanel();
+          switchToDetailTab();
+          const id = String(++requestSeq);
+          pendingTools[id] = 'get_node_detail';
+          vscode.postMessage({ type: 'callTool', id, name: 'get_node_detail', args: { uuid: selectedUuid } });
         };
       });
     }
 
-    function handleToolText(text) {
+    function applyTreeData(tree) {
+      const root = unwrapTree(tree);
+      if (!root || typeof root !== 'object') return;
+      treeData = root;
+      if (document.getElementById('panel-tree').style.display !== 'none') {
+        renderTreePanel();
+      }
+    }
+
+    function handleTreeText(text) {
       if (!text || typeof text !== 'string') {
         document.getElementById('tree').textContent = '空响应';
         return;
@@ -219,41 +262,87 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
         document.getElementById('tree').textContent = '错误: ' + (data.msg || data.error);
         return;
       }
-      if (data && data.id && Array.isArray(data.components)) {
-        document.getElementById('detail').textContent = JSON.stringify(data, null, 2);
-        return;
+      applyTreeData(unwrapTree(data));
+    }
+
+    function handleDetailText(text) {
+      if (!text || typeof text !== 'string') {
+        detailText = '空响应';
+      } else if (text.startsWith('Execution failed:')) {
+        detailText = text;
+      } else {
+        try {
+          const data = JSON.parse(text);
+          if (data && data.error) {
+            detailText = '错误: ' + (data.msg || data.error);
+          } else {
+            detailText = JSON.stringify(data, null, 2);
+          }
+        } catch (err) {
+          detailText = '解析失败: ' + err.message;
+        }
       }
-      applyTreeToDom(unwrapTree(data));
+      if (document.getElementById('panel-detail').style.display !== 'none') {
+        renderDetailPanel();
+      }
+    }
+
+    function resolveToolName(msg) {
+      return msg.name || pendingTools[msg.id] || '';
+    }
+
+    function dispatchToolResult(toolName, text) {
+      if (toolName === 'get_node_detail') {
+        handleDetailText(text);
+      } else if (toolName === 'get_node_tree') {
+        handleTreeText(text);
+      }
     }
 
     window.addEventListener('message', (e) => {
       const msg = e.data;
       if (msg.type === 'toolResult' && msg.result && msg.result.content) {
-        handleToolText(msg.result.content[0].text);
+        const toolName = resolveToolName(msg);
+        delete pendingTools[msg.id];
+        if (!toolName) return;
+        dispatchToolResult(toolName, msg.result.content[0].text);
       } else if (msg.type === 'toolError') {
-        document.getElementById('tree').textContent = '错误: ' + msg.error;
+        const toolName = resolveToolName(msg);
+        delete pendingTools[msg.id];
+        if (toolName === 'get_node_detail') {
+          detailText = '错误: ' + msg.error;
+          if (document.getElementById('panel-detail').style.display !== 'none') renderDetailPanel();
+        } else if (toolName === 'get_node_tree') {
+          document.getElementById('tree').textContent = '错误: ' + msg.error;
+        }
       } else if (msg.type === 'bridgeEvent' && msg.event && msg.event.type === 'probe:event' && msg.event.channel === 'update-tree') {
         try {
           const payload = typeof msg.event.args[0] === 'string' ? JSON.parse(msg.event.args[0]) : msg.event.args[0];
-          if (payload && payload.tree) {
-            applyTreeToDom(payload.tree);
+          if (payload && payload.tree && isLikelyFullTree(unwrapTree(payload.tree))) {
+            applyTreeData(payload.tree);
           }
         } catch(_) {}
       }
     });
 
-    document.getElementById('tab-tree').onclick = () => {
+    function switchToTreeTab() {
       document.getElementById('tab-tree').classList.add('active');
       document.getElementById('tab-detail').classList.remove('active');
       document.getElementById('panel-tree').style.display = '';
       document.getElementById('panel-detail').style.display = 'none';
-    };
-    document.getElementById('tab-detail').onclick = () => {
+      renderTreePanel();
+    }
+
+    function switchToDetailTab() {
       document.getElementById('tab-detail').classList.add('active');
       document.getElementById('tab-tree').classList.remove('active');
       document.getElementById('panel-detail').style.display = '';
       document.getElementById('panel-tree').style.display = 'none';
-    };
+      renderDetailPanel();
+    }
+
+    document.getElementById('tab-tree').onclick = switchToTreeTab;
+    document.getElementById('tab-detail').onclick = switchToDetailTab;
 
     loadTree();
   </script>

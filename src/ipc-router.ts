@@ -10,6 +10,7 @@ import {
     getPreviewPort,
 } from './runtime-relay';
 import { forceInjectProbe } from './probe-injector';
+import { getPreviewProxyUrl, isPreviewProxyRunning, startPreviewProxy, stopPreviewProxy } from './preview-proxy';
 
 const CACHE: Record<string, { timestamp: number, data: any }> = {};
 const subscribers = new Set<WebSocket.WebSocket>();
@@ -52,11 +53,13 @@ function dispatchToPanelWithTimeout(channel: string, args: any, timeoutMs = 3000
 function buildPreviewInfo(): object {
     const projectPath = Editor.Project.path || '';
     const previewPort = getPreviewPort();
+    const directUrl = `http://127.0.0.1:${previewPort}`;
     return {
         type: 'preview/info',
         bridgePort: _bridgePort,
         previewPort,
-        previewUrl: `http://127.0.0.1:${previewPort}`,
+        previewUrl: directUrl,
+        probeProxyUrl: isPreviewProxyRunning() ? getPreviewProxyUrl(_bridgePort) : null,
         projectPath,
         projectName: require('path').basename(projectPath),
         hasPreview: !!findPreviewWebContents(),
@@ -117,6 +120,20 @@ function handleCaptureScreenshot(ws: WebSocket.WebSocket, reqId: string) {
 async function dispatchToolCall(name: string, args: any, _reqId: string): Promise<{ contentText: string; isError: boolean }> {
     let relayErr: any = null;
 
+    if (name === 'get_node_tree') {
+        try {
+            const panelRes = await dispatchToPanelWithTimeout('mcp-query-tree', args, 5000);
+            if (panelRes && !panelRes.error) {
+                return { contentText: JSON.stringify(panelRes.result || panelRes, null, 2), isError: false };
+            }
+            if (panelRes?.error) {
+                relayErr = new Error(panelRes.error);
+            }
+        } catch {
+            /* MCP 面板未打开 */
+        }
+    }
+
     if (canRelayTool(name)) {
         if (name === 'get_node_tree') {
             await forceInjectProbe();
@@ -126,7 +143,7 @@ async function dispatchToolCall(name: string, args: any, _reqId: string): Promis
             const relayResult = await handleRelayTool(name, args);
             return { contentText: JSON.stringify(relayResult, null, 2), isError: false };
         } catch (e: any) {
-            relayErr = e;
+            relayErr = relayErr || e;
             if (!TOOL_IPC_MAP[name]) {
                 return { contentText: JSON.stringify({ error: relayErr.message }), isError: true };
             }
@@ -177,6 +194,7 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
 
             _wss.on('listening', () => {
                 onStatusChange({ active: true, port: _bridgePort, error: '' });
+                startPreviewProxy(_bridgePort, getPreviewPort);
             });
 
             _wss.on('connection', (ws) => {
@@ -316,6 +334,7 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
     return {
         close: () => {
             subscribers.clear();
+            stopPreviewProxy();
             if (_wss) {
                 try { _wss.close(); } catch (e) { /* ignore */ }
                 _wss = null;

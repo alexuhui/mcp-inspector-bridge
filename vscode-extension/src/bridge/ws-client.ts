@@ -16,6 +16,7 @@ export interface PreviewInfo {
     bridgePort: number;
     previewPort: number;
     previewUrl: string;
+    probeProxyUrl?: string | null;
     projectPath: string;
     projectName: string;
     hasPreview: boolean;

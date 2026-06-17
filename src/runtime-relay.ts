@@ -18,15 +18,77 @@ function isPreviewUrl(url: string): boolean {
 export function findPreviewWebContents(): any | null {
     try {
         const { webContents } = require('electron');
+        const previewPort = getPreviewPort();
         const all = webContents.getAllWebContents();
         const candidates = all.filter((w: any) => {
             if (w.isDestroyed?.()) return false;
-            return isPreviewUrl(w.getURL());
+            const u = w.getURL();
+            if (u && u !== 'about:blank') {
+                if (u.includes('inspector') || u.startsWith('chrome-extension')) return false;
+                if (isPreviewUrl(u)) return true;
+            }
+            if (w.getType?.() === 'webview') return true;
+            return false;
         });
-        return candidates.find((w: any) => !w.getURL().includes('devtools')) || candidates[0] || null;
+        const withScene = candidates.filter((w: any) => {
+            const u = w.getURL() || '';
+            return !u.includes('devtools');
+        });
+        const portMatch = withScene.find((w: any) => {
+            const u = w.getURL() || '';
+            return u.includes(`:${previewPort}`);
+        });
+        if (portMatch) return portMatch;
+        const webview = withScene.find((w: any) => w.getType?.() === 'webview');
+        if (webview) return webview;
+        return withScene[0] || null;
     } catch {
         return null;
     }
+}
+
+function getPanelWebContentsFromIpc(): Promise<any | null> {
+    return new Promise((resolve) => {
+        if (typeof Editor === 'undefined') {
+            resolve(null);
+            return;
+        }
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (!settled) {
+                settled = true;
+                resolve(null);
+            }
+        }, 1000);
+        try {
+            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-get-webcontents-id', {}, (err: any, res: any) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                if (err || !res?.id) {
+                    resolve(null);
+                    return;
+                }
+                try {
+                    const { webContents } = require('electron');
+                    resolve(webContents.fromId(res.id) || null);
+                } catch {
+                    resolve(null);
+                }
+            });
+        } catch {
+            clearTimeout(timer);
+            resolve(null);
+        }
+    });
+}
+
+export async function resolvePreviewWebContents(): Promise<any | null> {
+    const fromPanel = await getPanelWebContentsFromIpc();
+    if (fromPanel && !fromPanel.isDestroyed?.()) return fromPanel;
+    const withScene = await findPreviewWebContentsWithScene();
+    if (withScene) return withScene;
+    return findPreviewWebContents();
 }
 
 async function findPreviewWebContentsWithScene(): Promise<any | null> {
@@ -51,9 +113,9 @@ async function findPreviewWebContentsWithScene(): Promise<any | null> {
 }
 
 export async function executeInPreview(code: string, timeoutMs = 4000): Promise<any> {
-    const wc = await findPreviewWebContentsWithScene() || findPreviewWebContents();
+    const wc = await resolvePreviewWebContents();
     if (!wc) {
-        throw new Error('未找到活跃的预览 WebContents，请确认已点击预览运行');
+        throw new Error('未找到 Creator 内预览 WebContents（外部预览请依赖探针 WebSocket 同步）');
     }
     const result = wc.executeJavaScript(code);
     if (!result || typeof result.then !== 'function') {
@@ -102,6 +164,18 @@ function trimTree(node: any, maxDepth: number, currentDepth = 1): any {
     return cloned;
 }
 
+function findNodeInTree(tree: any, uuid: string): any | null {
+    if (!tree || typeof tree !== 'object') return null;
+    if (tree.id === uuid) return tree;
+    if (!Array.isArray(tree.children)) return null;
+    for (const child of tree.children) {
+        if (typeof child !== 'object' || child === null) continue;
+        const found = findNodeInTree(child, uuid);
+        if (found) return found;
+    }
+    return null;
+}
+
 function escapeJsString(s: string): string {
     return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
@@ -135,8 +209,20 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                     } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
                 })();
             `;
-            const r = await executeInPreview(code);
-            return typeof r === 'string' ? JSON.parse(r) : r;
+            try {
+                const r = await executeInPreview(code);
+                return typeof r === 'string' ? JSON.parse(r) : r;
+            } catch (e: any) {
+                const cached = findNodeInTree(unwrapTreeNode(_nodeTreeCache), args.uuid);
+                if (cached) {
+                    return {
+                        ...cached,
+                        _fromCache: true,
+                        _hint: '节点树缓存中的摘要信息；完整属性需 Creator 内预览或探针实时连接',
+                    };
+                }
+                throw e;
+            }
         }
         case 'update_node_property': {
             const uuid = escapeJsString(args.uuid || '');
@@ -196,7 +282,11 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
         }
         case 'get_node_tree': {
             const maxDepth = typeof args.depth === 'number' ? args.depth : 3;
-            let rawTree: any = null;
+            let rawTree: any = unwrapTreeNode(_nodeTreeCache);
+            if (rawTree) {
+                const cloned = JSON.parse(JSON.stringify(rawTree));
+                return trimTree(cloned, maxDepth);
+            }
 
             const fetchCode = `
                 (function(){
@@ -207,14 +297,9 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                         if (window.__mcpLastTreePayload && window.__mcpLastTreePayload.tree) {
                             return JSON.stringify({ ok: true, tree: window.__mcpLastTreePayload.tree });
                         }
-                        if (window.cc && window.cc.director) {
-                            var scene = window.cc.director.getScene();
-                            if (!scene) {
-                                return JSON.stringify({ ok: false, error: 'SCENE_NOT_READY', msg: '场景尚未加载' });
-                            }
-                            if (!window.__mcpProbeInitialized) {
-                                return JSON.stringify({ ok: false, error: 'PROBE_NOT_READY', msg: '探针尚未注入，请稍候重试' });
-                            }
+                        if (window.__mcpCrawler && typeof window.__mcpCrawler.serializeSceneTree === 'function') {
+                            var tree = window.__mcpCrawler.serializeSceneTree();
+                            if (tree) return JSON.stringify({ ok: true, tree: tree });
                         }
                         return JSON.stringify({ ok: false, error: 'TREE_EMPTY', msg: '节点树尚未同步' });
                     } catch (e) {
@@ -223,19 +308,22 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                 })();
             `;
 
-            try {
-                const fetched = await executeInPreview(fetchCode, 8000);
-                if (typeof fetched === 'string') {
-                    const parsed = JSON.parse(fetched);
-                    if (parsed.ok && parsed.tree) {
-                        rawTree = parsed.tree;
-                        setNodeTreeCache(rawTree);
-                    } else if (parsed.error) {
-                        throw new Error(parsed.msg || parsed.error);
+            const wc = await resolvePreviewWebContents();
+            if (wc) {
+                try {
+                    const fetched = await executeInPreview(fetchCode, 8000);
+                    if (typeof fetched === 'string') {
+                        const parsed = JSON.parse(fetched);
+                        if (parsed.ok && parsed.tree) {
+                            rawTree = parsed.tree;
+                            setNodeTreeCache(rawTree);
+                        } else if (parsed.error && !rawTree) {
+                            throw new Error(parsed.msg || parsed.error);
+                        }
                     }
+                } catch (e: any) {
+                    if (!rawTree) throw e;
                 }
-            } catch (e: any) {
-                if (!_nodeTreeCache) throw e;
             }
 
             if (!rawTree) {
@@ -243,7 +331,11 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
             }
 
             if (!rawTree) {
-                throw new Error('节点树数据为空，请确认游戏预览已运行且探针已注入');
+                throw new Error(
+                    wc
+                        ? '节点树尚未同步，请稍候点击「刷新节点树」'
+                        : '节点树尚未同步。请打开 Creator 菜单「MCP 桥接器 → 开启运行时面板」并保持其中预览运行',
+                );
             }
 
             const cloned = JSON.parse(JSON.stringify(rawTree));

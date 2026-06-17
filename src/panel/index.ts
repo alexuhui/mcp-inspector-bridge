@@ -927,22 +927,8 @@ mcp.log('脚本已加载');
         },
         'mcp-query-tree'(this: any, event: any, args: any) {
             if (!event.reply) return;
-            if (typeof Editor !== 'undefined') Editor.log("[mcp-query-tree] Received request, tree exists:", !!globalState.nodeTree);
-            if (!globalState.nodeTree) {
-                event.reply(null, { error: 'Node tree data is empty or not yet initialized.' });
-                return;
-            }
-            const maxDepth = (args && typeof args.depth === 'number') ? args.depth : 3;
-            
-            let rawTree: any = null;
-            try {
-                rawTree = JSON.parse(JSON.stringify(globalState.nodeTree));
-            } catch(e: any) {
-                event.reply(null, { error: 'Tree parse error: ' + e.message });
-                return;
-            }
 
-            const trimTree = (node: any, currentDepth: number): any => {
+            const trimTree = (node: any, currentDepth: number, maxDepth: number): any => {
                 if (!node) return node;
                 const cloned = { ...node };
                 if (currentDepth >= maxDepth) {
@@ -950,14 +936,88 @@ mcp.log('脚本已加载');
                         cloned.children = [`__TRUNCATED__ (hidden ${cloned.children.length} items, use depth > ${maxDepth} to view)`];
                     }
                 } else if (cloned.children && Array.isArray(cloned.children)) {
-                    cloned.children = cloned.children.map((c: any) => trimTree(c, currentDepth + 1));
+                    cloned.children = cloned.children.map((c: any) => trimTree(c, currentDepth + 1, maxDepth));
                 }
                 return cloned;
             };
-            
-            const trimmedTree = trimTree(rawTree, 1);
-            if (typeof Editor !== 'undefined') Editor.log("[mcp-query-tree] Trimmed tree, replying...");
-            event.reply(null, trimmedTree);
+
+            const replyTree = (tree: any) => {
+                const maxDepth = (args && typeof args.depth === 'number') ? args.depth : 3;
+                try {
+                    const rawTree = JSON.parse(JSON.stringify(tree));
+                    event.reply(null, trimTree(rawTree, 1, maxDepth));
+                } catch (e: any) {
+                    event.reply(null, { error: 'Tree parse error: ' + e.message });
+                }
+            };
+
+            if (globalState.nodeTree) {
+                replyTree(globalState.nodeTree);
+                return;
+            }
+
+            const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
+            if (!wv) {
+                event.reply(null, { error: 'MCP 面板 webview 未就绪，请确认已打开「MCP 桥接器 → 开启运行时面板」' });
+                return;
+            }
+            try { wv.getWebContentsId(); } catch (e: any) {
+                event.reply(null, { error: 'WebView not ready: ' + e.message });
+                return;
+            }
+
+            const syncCode = `
+                (function(){
+                    try {
+                        if (typeof window.__mcpSyncNodeTree === 'function') {
+                            window.__mcpSyncNodeTree();
+                        }
+                        if (window.__mcpCrawler && typeof window.__mcpCrawler.serializeSceneTree === 'function') {
+                            var tree = window.__mcpCrawler.serializeSceneTree();
+                            if (tree) return JSON.stringify({ tree: tree });
+                        }
+                        return null;
+                    } catch(e) { return JSON.stringify({ error: e.message }); }
+                })();
+            `;
+
+            wv.executeJavaScript(syncCode).then((result: any) => {
+                if (!result) {
+                    event.reply(null, { error: '节点树尚未同步，请确认 MCP 面板内预览已运行且游戏已加载' });
+                    return;
+                }
+                try {
+                    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+                    if (parsed.error) {
+                        event.reply(null, { error: parsed.error });
+                        return;
+                    }
+                    if (parsed.tree) {
+                        globalState.nodeTree = parsed.tree;
+                        globalState.lastTreeUpdate = Date.now();
+                        replyTree(parsed.tree);
+                        return;
+                    }
+                    event.reply(null, { error: '节点树数据为空' });
+                } catch (e: any) {
+                    event.reply(null, { error: 'Tree parse error: ' + e.message });
+                }
+            }).catch((e: any) => {
+                event.reply(null, { error: e.message || 'executeJavaScript failed' });
+            });
+        },
+        'mcp-get-webcontents-id'(this: any, event: any) {
+            if (!event.reply) return;
+            const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
+            if (!wv) {
+                event.reply(null, { error: 'No WebView' });
+                return;
+            }
+            try {
+                event.reply(null, { id: wv.getWebContentsId() });
+            } catch (e: any) {
+                event.reply(null, { error: e.message });
+            }
         },
         'mcp-query-logs'(this: any, event: any, args: any) {
             const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;

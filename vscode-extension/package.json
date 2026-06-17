@@ -60,6 +60,11 @@
           "type": "number",
           "default": 0,
           "description": "手动指定 Bridge 端口（0 = 自动扫描 4456-4556）"
+        },
+        "cocosInspector.useProbeProxy": {
+          "type": "boolean",
+          "default": false,
+          "description": "预览走探针代理页（仅当节点树无法同步且不需 Creator 预览窗时开启；默认直连预览端口）"
         }
       }
     }

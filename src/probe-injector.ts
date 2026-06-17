@@ -6,63 +6,19 @@ declare const Editor: any;
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { findPreviewWebContents } from './runtime-relay';
+import { findPreviewWebContents, getPreviewPort, resolvePreviewWebContents } from './runtime-relay';
+import { buildWsBridgeBootstrap, readProbeScript } from './probe-bundle';
 
 let _injectTimer: any = null;
 let _bridgePort = 4456;
 let _lastInjectedWcId: number | null = null;
 
-function buildWsBridgeBootstrap(port: number): string {
-    return `
-(function(){
-    if (window.__mcpWsBridgeReady) return;
-    window.__mcpWsBridgeReady = true;
-    var BRIDGE_PORT = ${port};
-    var ws = null;
-    var queue = [];
-
-    function connect() {
-        try {
-            ws = new WebSocket('ws://127.0.0.1:' + BRIDGE_PORT);
-            ws.onopen = function() {
-                ws.send(JSON.stringify({ method: 'subscribe' }));
-                while (queue.length) ws.send(queue.shift());
-            };
-            ws.onclose = function() { setTimeout(connect, 2000); };
-            ws.onerror = function() {};
-        } catch(e) { setTimeout(connect, 2000); }
-    }
-    connect();
-
-    function emit(channel, args) {
-        var payload = JSON.stringify({ type: 'probe:event', channel: channel, args: args || [], timestamp: Date.now() });
-        if (ws && ws.readyState === 1) ws.send(payload);
-        else queue.push(payload);
-    }
-
-    if (!window.__mcpInspector) {
-        window.__mcpInspector = {};
-    }
-    var base = window.__mcpInspector;
-    window.__mcpInspector = {
-        updateTree: function(d) {
-            try { window.__mcpLastTreePayload = typeof d === 'string' ? JSON.parse(d) : d; } catch(e) {}
-            if (base.updateTree) base.updateTree(d);
-            emit('update-tree', [d]);
-        },
-        updateEnv: function(d) { if (base.updateEnv) base.updateEnv(d); emit('update-env', [d]); },
-        sendLog: function(d) { if (base.sendLog) base.sendLog(d); emit('send-log', [d]); },
-        sendHandshake: function(i) { if (base.sendHandshake) base.sendHandshake(i); emit('handshake', [i]); },
-        sendRenderDebuggerPayload: function(p) { if (base.sendRenderDebuggerPayload) base.sendRenderDebuggerPayload(p); emit('render-debugger-payload', [p]); },
-        sendNodeSelected: function(u) { if (base.sendNodeSelected) base.sendNodeSelected(u); emit('node-picker-selected', [u]); },
-        sendClearSelection: function() { if (base.sendClearSelection) base.sendClearSelection(); emit('clear-selection', []); }
-    };
-})();
-`;
+function buildWsBridgeBootstrapLocal(port: number): string {
+    return buildWsBridgeBootstrap(port);
 }
 
 async function injectProbeIfNeeded(silent = true): Promise<boolean> {
-    const wc = findPreviewWebContents();
+    const wc = await resolvePreviewWebContents();
     if (!wc) return false;
 
     const wcId = wc.id;
@@ -84,8 +40,8 @@ async function injectProbeIfNeeded(silent = true): Promise<boolean> {
             if (!silent) Editor.warn('[ProbeInjector] probe.js 不存在，请先 npm run build');
             return false;
         }
-        const probeContent = fs.readFileSync(probePath, 'utf-8');
-        const bootstrap = buildWsBridgeBootstrap(_bridgePort);
+        const probeContent = readProbeScript();
+        const bootstrap = buildWsBridgeBootstrapLocal(_bridgePort);
 
         await wc.executeJavaScript(bootstrap);
         await wc.executeJavaScript(probeContent);

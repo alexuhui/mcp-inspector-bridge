@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { Logger } from './logger';
-import { syncNodeTree } from './crawler-serialize';
+import { syncNodeTree, serializeNode } from './crawler-serialize';
 
 function initVisualFeedbackStyle() {
     if (document.getElementById('__mcp_simulate_style')) return;
@@ -56,6 +56,13 @@ function initVisualFeedbackStyle() {
 
 export function initCrawler() {
     window.__mcpCrawler = {
+        serializeSceneTree: function () {
+            const eng = window.cc;
+            if (!eng || !eng.director) return null;
+            const scene = eng.director.getScene();
+            if (!scene) return null;
+            return serializeNode(scene, 0);
+        },
         findNodeByUuid: function (uuid, root) {
             const eng = window.cc;
             if (!eng || !eng.director) return null;
