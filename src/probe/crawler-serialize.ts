@@ -63,7 +63,7 @@ export function serializeNode(node, currentPrefabDepth = 0) {
 
     const data = {
         id: node.uuid || node.id,
-        name: node.name,
+        name: isScene ? (node.name || 'Scene') : (node.name || 'Node'),
         active: isActive,
         activeInHierarchy: isActiveInHierarchy,
         childrenCount: node.childrenCount || 0,

@@ -75,7 +75,7 @@ export function initCrawler() {
             if (typeof window.cc !== 'undefined' && node instanceof window.cc.Scene) {
                 return {
                     id: node.uuid || node.id,
-                    name: node.name,
+                    name: node.name || 'Scene',
                     isScene: true,
                     active: true,
                     components: [],

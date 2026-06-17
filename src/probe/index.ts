@@ -129,6 +129,12 @@ import { initPicker } from './picker';
                 syncNodeTree();
             }, DEBUG_INTERVAL);
 
+            // 外部模式（VS Code / headless）：无面板时仍定期同步节点树
+            setInterval(() => {
+                if (window.__mcpActiveTab !== undefined) return;
+                syncNodeTree();
+            }, DEBUG_INTERVAL);
+
             // 标记探针已初始化完成，防止重复注入
             window.__mcpProbeInitialized = true;
 

@@ -35,6 +35,29 @@ npm install
 npm run build
 ```
 
+#### Windows 一键构建（推荐）
+
+为避免本机 Node 版本/架构不一致导致的 `esbuild` 问题，仓库根目录提供了可直接运行的 bat 脚本：
+
+```bat
+:: 1) 全量清理（可选）
+clean-win.bat
+
+:: 2) 构建主插件（dist/probe.js + dist/mcp-client/index.js）
+build-win.bat
+
+:: 3) 构建主插件 + vscode-extension
+build-all-win.bat
+```
+
+说明：
+
+- `build-win.bat` 会自动执行依赖安装、`tsc` 编译、`esbuild` 打包。
+- `build-all-win.bat` 会先调用 `build-win.bat`，再构建 `vscode-extension` 子包。
+- `clean-win.bat` 会清理 `node_modules`、`dist`、`vscode-extension/dist`，用于“全量重装再构建”。
+- `package-vsix-win.bat` 会先执行 `build-all-win.bat`，再通过 `.tools/vsce-packager` 中的隔离 `vsce@2.7.0` 打包 `vscode-extension/*.vsix`（供 Cursor「从 VSIX 安装」；固定 `cheerio@1.0.0-rc.12`，避免 Node 16 下 `undici` 报错）。
+- 若终端出现 `optional SKIPPING OPTIONAL DEPENDENCY`，通常是跨平台可选依赖提示，可忽略。
+
 ### 使用
 
 1. 在 Cocos Creator 中打开任意场景

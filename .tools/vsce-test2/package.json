@@ -1,0 +1,8 @@
+{
+  "name": "vsce-packager",
+  "private": true,
+  "dependencies": {
+    "cheerio": "^0.22.0",
+    "vsce": "^1.103.1"
+  }
+}

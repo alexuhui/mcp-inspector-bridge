@@ -2,6 +2,7 @@
 import * as WebSocket from 'ws';
 // Removed Node path import; using custom getBaseName function
 import { startMcpRouter } from './ipc-router';
+import { startProbeInjector, stopProbeInjector } from './probe-injector';
 declare const Editor: any;
 
 let _isSceneActive = false;
@@ -22,6 +23,15 @@ let _wss: WebSocket.Server | null = null;
 let _mcpStatus = { active: false, port: 4456, error: 'Initializing...' };
 let _logHeartbeatTimer: any = null;
 
+function isHeadlessMode(): boolean {
+    try {
+        const profile = Editor.Profile.load('profile://project/mcp-inspector-bridge.json', 'mcp-inspector-bridge');
+        return profile.get('headless') === true;
+    } catch (e) {
+        return false;
+    }
+}
+
 /**
  * mcp-inspector-bridge: 主进程入口
  */
@@ -35,6 +45,7 @@ module.exports = {
                 Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-status-changed', _mcpStatus);
                 if (status.active) {
                     Editor.log(`[MCP] Bridge started on ws://localhost:${status.port}`);
+                    startProbeInjector(status.port);
                 } else if (status.error) {
                     Editor.error(`[MCP] WebSocket server error on port ${status.port}:`, status.error);
                 }
@@ -57,9 +68,17 @@ module.exports = {
                 }
             } catch (e) {}
         }, 1000);
+
+        // headless 模式：不自动打开面板，仅后台运行 bridge
+        if (!isHeadlessMode()) {
+            // 非 headless 时保持原有行为（用户通过菜单打开面板）
+        } else {
+            Editor.log('[MCP] Headless 模式已启用，bridge 在后台运行，可使用 Cursor/VS Code 扩展连接');
+        }
     },
 
     unload() {
+        stopProbeInjector();
         if (_wss) {
             _wss.close();
             _wss = null;
@@ -85,6 +104,10 @@ module.exports = {
             Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false });
         },
         'open'() {
+            if (isHeadlessMode()) {
+                Editor.log('[MCP] Headless 模式：bridge 已在后台运行，无需打开 Creator 面板');
+                return;
+            }
             // 收到菜单指令，打开主面板
             Editor.Panel.open('mcp-inspector-bridge');
         },
@@ -145,6 +168,15 @@ module.exports = {
             const profile = Editor.Profile.load('profile://project/mcp-inspector-bridge.json', 'mcp-inspector-bridge');
             profile.set('audio-mute', value);
             profile.save();
+        },
+        'query-headless'(event: any) {
+            if (event.reply) event.reply(null, isHeadlessMode());
+        },
+        'save-headless'(event: any, value: boolean) {
+            const profile = Editor.Profile.load('profile://project/mcp-inspector-bridge.json', 'mcp-inspector-bridge');
+            profile.set('headless', !!value);
+            profile.save();
+            if (event.reply) event.reply(null, { success: true, headless: !!value });
         },
         'query-panel-width'(event: any) {
             const profile = Editor.Profile.load('profile://project/mcp-inspector-bridge.json', 'mcp-inspector-bridge');

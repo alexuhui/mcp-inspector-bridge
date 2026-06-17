@@ -1,11 +1,13 @@
 {
 	"name": "mcp-inspector-bridge",
-	"version": "0.1.5",
+	"version": "0.2.0",
 	"description": "Modern Cocos Inspector Bridge using TypeScript and Vue 3",
 	"author": "Firekula",
 	"main": "dist/main.js",
 	"scripts": {
 		"build": "tsc && esbuild src/probe/index.ts --bundle --outfile=dist/probe.js && esbuild src/mcp-client/index.ts --bundle --platform=node --outfile=dist/mcp-client/index.js",
+		"build:vscode": "cd vscode-extension && npm install && npm run build",
+		"build:all": "npm run build && npm run build:vscode",
 		"watch": "tsc -w & esbuild src/probe/index.ts --bundle --outfile=dist/probe.js --watch & esbuild src/mcp-client/index.ts --bundle --platform=node --outfile=dist/mcp-client/index.js --watch"
 	},
 	"main-menu": {
@@ -24,7 +26,7 @@
 	"devDependencies": {
 		"@types/node": "^25.5.0",
 		"@types/ws": "^8.18.1",
-		"esbuild": "^0.27.4",
+		"esbuild": "^0.27.7",
 		"typescript": "^6.0.2"
 	},
 	"dependencies": {

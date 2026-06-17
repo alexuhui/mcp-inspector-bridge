@@ -4,6 +4,46 @@
 
 ---
 
+## [0.2.0] - 2026-06-17
+
+### ✨ 新特性
+
+- **主进程 runtime-relay**：MCP 运行时工具（节点树/属性/性能等）可通过主进程 WebContents 直接执行，不再硬依赖 Creator 面板 webview
+- **WebSocket subscribe / preview/info**：外部客户端（Cursor VS Code 扩展）可订阅探针事件并获取预览 URL
+- **全局探针 CDP 注入**：`probe-injector` 向预览页自动注入 probe.js + WS 事件桥
+- **Headless 模式**：项目 profile `headless: true` 时 bridge 后台运行，无需打开 Creator 面板
+- **vscode-extension 子包**：同仓库 monorepo，提供 Cursor/VS Code 侧边栏预览 + 节点树 MVP
+
+### 📁 新增文件
+
+- `src/shared/protocol.ts` — 桥接协议常量
+- `src/runtime-relay.ts` — 主进程运行时中继
+- `src/probe-injector.ts` — 全局探针注入器
+- `vscode-extension/` — VS Code/Cursor 扩展子包
+
+### 🛠️ Windows 构建流程补充
+
+- 新增根目录一键构建脚本，支持在项目根目录直接执行 `.bat` 完成构建。
+- 为规避本机默认 Node 版本/架构不一致导致的 `esbuild` 问题，脚本优先使用 Visual Studio 自带 Node：
+  - `C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe`
+- 构建脚本会执行：
+  - 依赖安装（`npm install`）
+  - TypeScript 编译（`tsc`）
+  - `probe` 和 `mcp-client` 的 `esbuild` 打包
+- 新增脚本文件：
+  - `build-win.bat`：构建主插件（`dist/probe.js` + `dist/mcp-client/index.js`）
+  - `build-all-win.bat`：构建主插件 + `vscode-extension` 子包
+  - `clean-win.bat`：清理 `node_modules`、`dist`、扩展构建产物及 VSIX 打包工具缓存
+  - `package-vsix-win.bat`：一键构建并打包 `vscode-extension/*.vsix`
+
+### 🐛 缺陷修复
+
+- **修复 `package-vsix-win.bat` 在 Node 16 ia32 下打包失败**
+  - **问题**：`@vscode/vsce@3.x` 需要 Node 20+；即便降级 vsce，npm 6 仍会解析到 `cheerio@1.2.0` → `undici@7.x`，在 Node 16 上报 `ReadableStream is not defined`
+  - **方案**：在 `.tools/vsce-packager` 隔离安装 `vsce@2.7.0` + 固定 `cheerio@1.0.0-rc.12`，每次打包前 `npm install` 同步依赖，不再向 `vscode-extension/` 安装 vsce
+
+---
+
 ## [0.1.6] - 2026-05-14
 
 ### ✨ 新特性

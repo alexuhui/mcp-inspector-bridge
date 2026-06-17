@@ -1,0 +1,80 @@
+{
+  "name": "cocos-mcp-inspector",
+  "displayName": "Cocos MCP Inspector",
+  "description": "Cocos Creator 运行时审查面板 — 在 Cursor/VS Code 中连接 mcp-inspector-bridge",
+  "version": "0.1.0",
+  "publisher": "firekula",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:cocosInspector.open",
+    "workspaceContains:**/project.json"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cocosInspector.open",
+        "title": "Cocos Inspector: 打开预览面板",
+        "category": "Cocos"
+      },
+      {
+        "command": "cocosInspector.connect",
+        "title": "Cocos Inspector: 连接 Bridge",
+        "category": "Cocos"
+      },
+      {
+        "command": "cocosInspector.configureMcp",
+        "title": "Cocos Inspector: 配置 Cursor MCP",
+        "category": "Cocos"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cocos-inspector",
+          "title": "Cocos Inspector",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "cocos-inspector": [
+        {
+          "type": "webview",
+          "id": "cocosInspector.panel",
+          "name": "预览面板"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Cocos MCP Inspector",
+      "properties": {
+        "cocosInspector.bridgePort": {
+          "type": "number",
+          "default": 0,
+          "description": "手动指定 Bridge 端口（0 = 自动扫描 4456-4556）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p . && node scripts/copy-mcp-client.js",
+    "watch": "tsc -w -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^6.0.2"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  }
+}

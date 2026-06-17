@@ -1,0 +1,9 @@
+{
+  "name": "vsce-packager",
+  "private": true,
+  "description": "Isolated vsce install for Node 16 ia32 (pins cheerio to avoid undici 7.x)",
+  "dependencies": {
+    "vsce": "2.7.0",
+    "cheerio": "1.0.0-rc.12"
+  }
+}
