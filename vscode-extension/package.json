@@ -2,7 +2,7 @@
   "name": "cocos-mcp-inspector",
   "displayName": "Cocos MCP Inspector",
   "description": "Cocos Creator 运行时审查面板 — 在 Cursor/VS Code 中连接 mcp-inspector-bridge",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "publisher": "firekula",
   "license": "MIT",
   "engines": {

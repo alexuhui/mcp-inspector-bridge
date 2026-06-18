@@ -22,13 +22,19 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = this.getLoadingHtml();
 
+        const doRefresh = (ensurePreview: boolean) => {
+            void this.refresh(webviewView, { ensurePreview });
+        };
+
         webviewView.onDidChangeVisibility(() => {
             if (webviewView.visible) {
-                this.refresh(webviewView);
+                doRefresh(true);
             }
         });
 
-        this.refresh(webviewView);
+        if (webviewView.visible) {
+            doRefresh(true);
+        }
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             if (msg.type === 'callTool') {
@@ -39,16 +45,16 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
                     webviewView.webview.postMessage({ type: 'toolError', id: msg.id, name: msg.name, error: e.message });
                 }
             } else if (msg.type === 'refresh') {
-                this.refresh(webviewView);
+                void this.refresh(webviewView, { ensurePreview: false });
             } else if (msg.type === 'openPreviewInEditor') {
-                openPreviewInEditor(this.bridge, this.extensionUri).catch((e: Error) => {
+                openPreviewInEditor(this.bridge, this.extensionUri, { forceReload: true }).catch((e: Error) => {
                     vscode.window.showErrorMessage(e.message);
                 });
             }
         });
     }
 
-    private async refresh(webviewView: vscode.WebviewView): Promise<void> {
+    private async refresh(webviewView: vscode.WebviewView, opts?: { ensurePreview?: boolean }): Promise<void> {
         try {
             const config = vscode.workspace.getConfiguration('cocosInspector');
             const preferredPort = config.get<number>('bridgePort') || 0;
@@ -62,7 +68,7 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
                 webviewView.webview.postMessage({ type: 'bridgeEvent', event });
             });
 
-            if (previewInEditor) {
+            if (previewInEditor && opts?.ensurePreview !== false) {
                 openPreviewInEditor(this.bridge, this.extensionUri).catch(() => { /* 侧栏仍展示节点树 */ });
             }
 

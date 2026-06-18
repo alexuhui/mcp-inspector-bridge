@@ -23,15 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('cocosInspector.open', async () => {
-            const previewInEditor = vscode.workspace.getConfiguration('cocosInspector').get<boolean>('previewInEditor') !== false;
-            if (previewInEditor) {
-                try {
-                    await openPreviewInEditor(bridgeClient, context.extensionUri);
-                } catch (e: any) {
-                    vscode.window.showErrorMessage(e.message);
-                }
-            }
+        vscode.commands.registerCommand('cocosInspector.open', () => {
             vscode.commands.executeCommand('cocosInspector.panel.focus');
         })
     );
@@ -70,15 +62,10 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // 启动时尝试静默连接，并在启用时将预览放到编辑器区域
+    // 启动时仅静默连接 Bridge；预览由侧栏面板可见时打开
     bridgeClient.connect(vscode.workspace.getConfiguration('cocosInspector').get<number>('bridgePort') || 0)
-        .then(async (inst) => {
+        .then((inst) => {
             statusBarItem.text = `$(debug-start) Cocos: ${inst.projectName}`;
-            if (vscode.workspace.getConfiguration('cocosInspector').get<boolean>('previewInEditor') !== false) {
-                try {
-                    await openPreviewInEditor(bridgeClient, context.extensionUri);
-                } catch (_) { /* 预览未就绪时忽略 */ }
-            }
         })
         .catch(() => { /* 静默失败 */ });
 }
