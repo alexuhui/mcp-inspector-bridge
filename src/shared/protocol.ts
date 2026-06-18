@@ -30,6 +30,7 @@ export const RELAY_RUNTIME_TOOLS = new Set([
     'simulate_input',
     'get_node_tree',
     'get_runtime_stats',
+    'control_engine',
 ]);
 
 /** 仍依赖 Creator 面板进程的工具（脚本系统、刷新预览 UI） */
@@ -65,4 +66,20 @@ export interface PreviewInfoPayload {
     projectPath: string;
     projectName: string;
     hasPreview: boolean;
+}
+
+/** 主进程向已连接探针页面发起 JS 执行的 RPC 超时（毫秒） */
+export const PROBE_RPC_TIMEOUT_MS = 5000;
+
+export interface ProbeRpcRequest {
+    method: 'probe/rpc';
+    id: string;
+    code: string;
+}
+
+export interface ProbeRpcResponse {
+    type: 'probe/rpc';
+    id: string;
+    result?: string;
+    error?: string;
 }

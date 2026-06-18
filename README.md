@@ -61,8 +61,28 @@ build-all-win.bat
 ### 使用
 
 1. 在 Cocos Creator 中打开任意场景
-2. 菜单栏 → **MCP 桥接器** → **开启运行时面板**
+2. 菜单栏 → **MCP 桥接器** → **开启运行时面板**（可选；也可仅用 VS Code 扩展 + headless bridge）
 3. 点击 **预览运行** 按钮，插件面板将自动捕获游戏预览并加载节点树
+
+### Cursor / VS Code 扩展
+
+同仓库 `vscode-extension/` 子包提供侧栏节点树与属性检查，预览可显示在编辑器区域：
+
+```bat
+build-all-win.bat
+package-vsix-win.bat
+```
+
+在 Cursor 中：**扩展 → 从 VSIX 安装**，然后 Reload Window。
+
+| 设置项 | 说明 |
+|--------|------|
+| `cocosInspector.previewInEditor` | `true`（默认）：预览在代码区，侧栏仅节点树/属性 |
+| `cocosInspector.previewMode` | `simpleBrowser`（推荐）或 `webview` |
+| `cocosInspector.useProbeProxy` | 仅侧栏内嵌预览时有效；编辑器预览始终直连 Creator 端口 |
+| `cocosInspector.bridgePort` | `0` = 自动扫描；多开 Creator 时点击状态栏选择实例 |
+
+命令面板：`Cocos Inspector: 选择 Bridge 实例` / `在编辑器打开预览` / `打开预览页 / DevTools`
 
 ---
 

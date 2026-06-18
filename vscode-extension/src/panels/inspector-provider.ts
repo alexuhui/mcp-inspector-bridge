@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { BridgeClient } from '../bridge/ws-client';
 import { getPreviewSrc, openPreviewInEditor } from './preview-panel';
+import { buildSidebarScript } from './sidebar-script';
 
 export class InspectorPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cocosInspector.panel';
@@ -138,8 +139,8 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   .preview iframe { width: 100%; height: 100%; border: none; background: #000; }
   .sidebar { width: 280px; display: flex; flex-direction: column; flex-shrink: 0; }
   .sidebar-full { width: 100%; flex: 1; }
-  .tabs { display: flex; background: #2d2d2d; }
-  .tab { padding: 6px 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabs { display: flex; background: #2d2d2d; overflow-x: auto; flex-shrink: 0; }
+  .tab { padding: 6px 10px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; font-size: 12px; }
   .tab.active { border-bottom-color: #0e639c; color: #fff; }
   .panel { flex: 1; overflow: auto; padding: 8px; }
   pre { font-size: 11px; white-space: pre-wrap; word-break: break-all; }
@@ -147,6 +148,31 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   #tree { font-family: monospace; font-size: 12px; }
   .node { padding: 2px 4px; cursor: pointer; border-radius: 2px; }
   .node:hover { background: #37373d; }
+  .node.match { color: #4ec9b0; }
+  .search-bar { padding: 6px 0 4px; flex-shrink: 0; }
+  .search-bar input { width: 100%; padding: 4px 8px; background: #3c3c3c; border: 1px solid #555; color: #ccc; border-radius: 2px; font-size: 12px; }
+  .sync-hint { font-size: 10px; color: #888; padding: 2px 0 4px; min-height: 14px; }
+  #panel-tree { display: flex; flex-direction: column; }
+  #tree { flex: 1; overflow: auto; }
+  .detail-section { margin-bottom: 10px; }
+  .detail-section h4 { font-size: 11px; color: #9cdcfe; margin-bottom: 4px; text-transform: uppercase; }
+  .detail-kv { display: grid; grid-template-columns: 72px 1fr; gap: 2px 8px; font-size: 12px; margin-bottom: 2px; }
+  .detail-kv .k { color: #888; }
+  details.comp { margin-bottom: 4px; background: #2a2a2a; border-radius: 2px; padding: 4px 6px; }
+  details.comp summary { cursor: pointer; color: #dcdcaa; font-size: 12px; }
+  .detail-placeholder { color: #888; font-size: 12px; white-space: pre-wrap; }
+  details.raw-json { margin-top: 8px; }
+  details.raw-json pre { margin-top: 4px; font-size: 10px; color: #aaa; }
+  .prop-input { width: 100%; background: #3c3c3c; border: 1px solid #555; color: #ccc; padding: 2px 4px; font-size: 11px; border-radius: 2px; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { background: #2a2a2a; padding: 8px; border-radius: 4px; }
+  .stat .label { display: block; font-size: 10px; color: #888; }
+  .stat .val { font-size: 16px; color: #4ec9b0; }
+  .mem-total { margin-bottom: 8px; color: #9cdcfe; font-size: 12px; }
+  .mem-row, .script-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #333; font-size: 12px; }
+  .engine-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .hint { font-size: 10px; color: #888; margin-top: 8px; }
+  #engine-msg { font-size: 11px; color: #dcdcaa; min-height: 16px; }
 </style>
 </head>
 <body>
@@ -154,6 +180,7 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
     <span class="status">● ${info.projectName}</span>
     <span>Bridge :${info.bridgePort}</span>
     ${modeHint}
+    <span id="sync-hint" class="sync-hint"></span>
     <button onclick="loadTree()">刷新节点树</button>
     <button onclick="vscode.postMessage({type:'refresh'})">重连</button>
     <button onclick="vscode.postMessage({type:'openPreviewInEditor'})">在编辑器打开预览</button>
@@ -162,228 +189,35 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
     ${previewBlock}
     <div class="${sidebarClass}">
       <div class="tabs">
-        <div class="tab active" id="tab-tree">节点树</div>
+        <div class="tab" id="tab-tree">节点树</div>
         <div class="tab" id="tab-detail">属性</div>
+        <div class="tab" id="tab-perf">性能</div>
+        <div class="tab" id="tab-memory">内存</div>
+        <div class="tab" id="tab-engine">引擎</div>
+        <div class="tab" id="tab-render">渲染</div>
+        <div class="tab" id="tab-scripts">脚本</div>
       </div>
-      <div class="panel" id="panel-tree"><div id="tree">加载中...</div></div>
-      <div class="panel" id="panel-detail" style="display:none"><pre id="detail">选中节点查看属性</pre></div>
+      <div class="panel" id="panel-tree">
+        <div class="search-bar"><input type="text" id="tree-search" placeholder="搜索节点名称或组件..." /></div>
+        <div id="tree">加载中...</div>
+      </div>
+      <div class="panel" id="panel-detail" style="display:none"><div id="detail">选中节点查看属性</div></div>
+      <div class="panel" id="panel-perf" style="display:none"><div id="perf-content">加载中...</div></div>
+      <div class="panel" id="panel-memory" style="display:none"><div id="memory-content">点击标签加载</div></div>
+      <div class="panel" id="panel-engine" style="display:none">
+        <div class="engine-btns">
+          <button id="btn-pause">暂停/恢复</button>
+          <button id="btn-step">单帧</button>
+          <button id="btn-mute">静音</button>
+          <button id="btn-unmute">恢复音量</button>
+        </div>
+        <div id="engine-msg"></div>
+      </div>
+      <div class="panel" id="panel-render" style="display:none"><div id="render-content">等待数据...</div></div>
+      <div class="panel" id="panel-scripts" style="display:none"><div id="scripts-content">点击标签加载</div></div>
     </div>
   </div>
-  <script>
-    const vscode = acquireVsCodeApi();
-    let selectedUuid = '';
-    let treeData = null;
-    let detailText = '选中节点查看属性';
-    let requestSeq = 0;
-    const pendingTools = {};
-
-    function loadTree() {
-      const id = String(++requestSeq);
-      pendingTools[id] = 'get_node_tree';
-      document.getElementById('tree').textContent = '加载中...';
-      vscode.postMessage({ type: 'callTool', id, name: 'get_node_tree', args: { depth: 8 } });
-    }
-
-    function nodeLabel(node) {
-      if (!node || typeof node !== 'object') return '?';
-      if (typeof node === 'string') return node;
-      if (node.isScene) return node.name || 'Scene';
-      return node.name || node.id || '?';
-    }
-
-    function flattenTree(node, depth, rows) {
-      if (!node) return;
-      if (typeof node === 'string') {
-        rows.push({ label: node, depth: depth, id: '', isTruncated: true });
-        return;
-      }
-      if (typeof node !== 'object') return;
-      rows.push({
-        label: nodeLabel(node),
-        depth: depth,
-        id: node.id || '',
-        inactive: node.activeInHierarchy === false,
-        isScene: !!node.isScene,
-        compCount: typeof node.components === 'number' ? node.components : 0,
-      });
-      if (Array.isArray(node.children)) {
-        node.children.forEach(function(child) { flattenTree(child, depth + 1, rows); });
-      }
-    }
-
-    function renderTree(node) {
-      const rows = [];
-      flattenTree(node, 0, rows);
-      if (rows.length === 0) return '<div class="node">（空节点树）</div>';
-      return rows.map(function(row) {
-        const icon = row.isScene ? '🌐 ' : (row.isTruncated ? '… ' : '');
-        const style = 'padding-left:' + (row.depth * 12) + 'px' + (row.inactive ? ';opacity:0.45' : '');
-        const badge = row.compCount > 0 ? ' <span style="color:#888;font-size:10px">' + row.compCount + '</span>' : '';
-        if (row.id) {
-          return '<div class="node" style="' + style + '" data-uuid="' + row.id + '">' + icon + row.label + badge + '</div>';
-        }
-        return '<div class="node" style="' + style + ';color:#888">' + icon + row.label + '</div>';
-      }).join('');
-    }
-
-    function unwrapTree(data) {
-      if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
-      if (data.tree && typeof data.tree === 'object' && !Array.isArray(data.children)) return data.tree;
-      return data;
-    }
-
-    function isLikelyFullTree(node) {
-      if (!node || typeof node !== 'object') return false;
-      if (node.isScene) return true;
-      if (node.name === 'Scene' || node.name === 'Main') return true;
-      return false;
-    }
-
-    function renderTreePanel() {
-      const treeEl = document.getElementById('tree');
-      if (!treeData) {
-        treeEl.textContent = '（无节点树数据）';
-        return;
-      }
-      treeEl.innerHTML = renderTree(treeData);
-      bindTreeNodeClicks();
-      if (selectedUuid) {
-        const sel = treeEl.querySelector('.node[data-uuid="' + selectedUuid + '"]');
-        if (sel) sel.style.background = '#37373d';
-      }
-    }
-
-    function renderDetailPanel() {
-      document.getElementById('detail').textContent = detailText;
-    }
-
-    function bindTreeNodeClicks() {
-      document.querySelectorAll('.node[data-uuid]').forEach(el => {
-        el.onclick = () => {
-          selectedUuid = el.dataset.uuid;
-          detailText = '加载属性中...';
-          renderDetailPanel();
-          switchToDetailTab();
-          const id = String(++requestSeq);
-          pendingTools[id] = 'get_node_detail';
-          vscode.postMessage({ type: 'callTool', id, name: 'get_node_detail', args: { uuid: selectedUuid } });
-        };
-      });
-    }
-
-    function applyTreeData(tree) {
-      const root = unwrapTree(tree);
-      if (!root || typeof root !== 'object') return;
-      treeData = root;
-      if (document.getElementById('panel-tree').style.display !== 'none') {
-        renderTreePanel();
-      }
-    }
-
-    function handleTreeText(text) {
-      if (!text || typeof text !== 'string') {
-        document.getElementById('tree').textContent = '空响应';
-        return;
-      }
-      if (text.startsWith('Execution failed:')) {
-        document.getElementById('tree').textContent = text;
-        return;
-      }
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (err) {
-        document.getElementById('tree').textContent = '解析失败: ' + err.message;
-        return;
-      }
-      if (data && data.error) {
-        document.getElementById('tree').textContent = '错误: ' + (data.msg || data.error);
-        return;
-      }
-      applyTreeData(unwrapTree(data));
-    }
-
-    function handleDetailText(text) {
-      if (!text || typeof text !== 'string') {
-        detailText = '空响应';
-      } else if (text.startsWith('Execution failed:')) {
-        detailText = text;
-      } else {
-        try {
-          const data = JSON.parse(text);
-          if (data && data.error) {
-            detailText = '错误: ' + (data.msg || data.error);
-          } else {
-            detailText = JSON.stringify(data, null, 2);
-          }
-        } catch (err) {
-          detailText = '解析失败: ' + err.message;
-        }
-      }
-      if (document.getElementById('panel-detail').style.display !== 'none') {
-        renderDetailPanel();
-      }
-    }
-
-    function resolveToolName(msg) {
-      return msg.name || pendingTools[msg.id] || '';
-    }
-
-    function dispatchToolResult(toolName, text) {
-      if (toolName === 'get_node_detail') {
-        handleDetailText(text);
-      } else if (toolName === 'get_node_tree') {
-        handleTreeText(text);
-      }
-    }
-
-    window.addEventListener('message', (e) => {
-      const msg = e.data;
-      if (msg.type === 'toolResult' && msg.result && msg.result.content) {
-        const toolName = resolveToolName(msg);
-        delete pendingTools[msg.id];
-        if (!toolName) return;
-        dispatchToolResult(toolName, msg.result.content[0].text);
-      } else if (msg.type === 'toolError') {
-        const toolName = resolveToolName(msg);
-        delete pendingTools[msg.id];
-        if (toolName === 'get_node_detail') {
-          detailText = '错误: ' + msg.error;
-          if (document.getElementById('panel-detail').style.display !== 'none') renderDetailPanel();
-        } else if (toolName === 'get_node_tree') {
-          document.getElementById('tree').textContent = '错误: ' + msg.error;
-        }
-      } else if (msg.type === 'bridgeEvent' && msg.event && msg.event.type === 'probe:event' && msg.event.channel === 'update-tree') {
-        try {
-          const payload = typeof msg.event.args[0] === 'string' ? JSON.parse(msg.event.args[0]) : msg.event.args[0];
-          if (payload && payload.tree && isLikelyFullTree(unwrapTree(payload.tree))) {
-            applyTreeData(payload.tree);
-          }
-        } catch(_) {}
-      }
-    });
-
-    function switchToTreeTab() {
-      document.getElementById('tab-tree').classList.add('active');
-      document.getElementById('tab-detail').classList.remove('active');
-      document.getElementById('panel-tree').style.display = '';
-      document.getElementById('panel-detail').style.display = 'none';
-      renderTreePanel();
-    }
-
-    function switchToDetailTab() {
-      document.getElementById('tab-detail').classList.add('active');
-      document.getElementById('tab-tree').classList.remove('active');
-      document.getElementById('panel-detail').style.display = '';
-      document.getElementById('panel-tree').style.display = 'none';
-      renderDetailPanel();
-    }
-
-    document.getElementById('tab-tree').onclick = switchToTreeTab;
-    document.getElementById('tab-detail').onclick = switchToDetailTab;
-
-    loadTree();
-  </script>
+  <script>${buildSidebarScript()}</script>
 </body></html>`;
     }
 }

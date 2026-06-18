@@ -2,7 +2,7 @@
   "name": "cocos-mcp-inspector",
   "displayName": "Cocos MCP Inspector",
   "description": "Cocos Creator 运行时审查面板 — 在 Cursor/VS Code 中连接 mcp-inspector-bridge",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "publisher": "firekula",
   "license": "MIT",
   "engines": {
@@ -15,6 +15,8 @@
   "activationEvents": [
     "onCommand:cocosInspector.open",
     "onCommand:cocosInspector.openPreview",
+    "onCommand:cocosInspector.pickInstance",
+    "onCommand:cocosInspector.openDevTools",
     "workspaceContains:**/project.json"
   ],
   "main": "./dist/extension.js",
@@ -33,6 +35,16 @@
       {
         "command": "cocosInspector.openPreview",
         "title": "Cocos Inspector: 在编辑器打开预览",
+        "category": "Cocos"
+      },
+      {
+        "command": "cocosInspector.pickInstance",
+        "title": "Cocos Inspector: 选择 Bridge 实例",
+        "category": "Cocos"
+      },
+      {
+        "command": "cocosInspector.openDevTools",
+        "title": "Cocos Inspector: 打开预览页 / DevTools",
         "category": "Cocos"
       },
       {

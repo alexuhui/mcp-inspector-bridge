@@ -11,6 +11,7 @@ import {
 } from './runtime-relay';
 import { forceInjectProbe } from './probe-injector';
 import { getPreviewProxyUrl, isPreviewProxyRunning, startPreviewProxy, stopPreviewProxy } from './preview-proxy';
+import { handleProbeRpcResponse, registerProbePeer, unregisterProbePeer } from './probe-rpc';
 
 const CACHE: Record<string, { timestamp: number, data: any }> = {};
 const subscribers = new Set<WebSocket.WebSocket>();
@@ -198,13 +199,22 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
             });
 
             _wss.on('connection', (ws) => {
-                ws.on('close', () => { subscribers.delete(ws); });
+                ws.on('close', () => {
+                    subscribers.delete(ws);
+                    unregisterProbePeer(ws);
+                });
 
                 ws.on('message', async (message) => {
                     try {
                         const data = JSON.parse(message.toString());
 
+                        if (data.type === 'probe/rpc') {
+                            handleProbeRpcResponse(data);
+                            return;
+                        }
+
                         if (data.type === 'probe:event') {
+                            registerProbePeer(ws);
                             handleProbeEvent(data.channel, data.args || []);
                             broadcast(data);
                             return;
@@ -255,7 +265,7 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                                 return;
                             }
 
-                            if (!TOOL_IPC_MAP[name] && name !== 'capture_runtime_screenshot') {
+                            if (!TOOL_IPC_MAP[name] && name !== 'capture_runtime_screenshot' && !canRelayTool(name)) {
                                 ws.send(JSON.stringify({
                                     jsonrpc: "2.0", id: reqId,
                                     result: { content: [{ type: "text", text: `Tool unknown: ${name}` }] }

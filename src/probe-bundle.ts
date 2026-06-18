@@ -17,6 +17,38 @@ export function buildWsBridgeBootstrap(port: number): string {
                 ws.send(JSON.stringify({ method: 'subscribe' }));
                 while (queue.length) ws.send(queue.shift());
             };
+            ws.onmessage = function(ev) {
+                try {
+                    var msg = JSON.parse(ev.data);
+                    if (msg.method !== 'probe/rpc' || !msg.code) return;
+                    (function runRpc() {
+                        try {
+                            var r = (function(){ return eval(msg.code); })();
+                            function sendResult(val) {
+                                ws.send(JSON.stringify({
+                                    type: 'probe/rpc',
+                                    id: msg.id,
+                                    result: typeof val === 'string' ? val : JSON.stringify(val)
+                                }));
+                            }
+                            function sendError(err) {
+                                ws.send(JSON.stringify({
+                                    type: 'probe/rpc',
+                                    id: msg.id,
+                                    error: (err && err.message) ? err.message : String(err)
+                                }));
+                            }
+                            if (r && typeof r.then === 'function') {
+                                r.then(sendResult).catch(sendError);
+                                return;
+                            }
+                            sendResult(r);
+                        } catch(e) {
+                            ws.send(JSON.stringify({ type: 'probe/rpc', id: msg.id, error: e.message || String(e) }));
+                        }
+                    })();
+                } catch(e) {}
+            };
             ws.onclose = function() { setTimeout(connect, 2000); };
             ws.onerror = function() {};
         } catch(e) { setTimeout(connect, 2000); }

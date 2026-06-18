@@ -5,6 +5,7 @@
 declare const Editor: any;
 
 import { RELAY_RUNTIME_TOOLS } from './shared/protocol';
+import { executeProbeRpc } from './probe-rpc';
 
 let _nodeTreeCache: any = null;
 let _handshakeInfo: any = null;
@@ -127,6 +128,16 @@ export async function executeInPreview(code: string, timeoutMs = 4000): Promise<
     ]);
 }
 
+export async function executeRuntimeJs(code: string, timeoutMs = 4000): Promise<any> {
+    try {
+        const r = await executeInPreview(code, timeoutMs);
+        return typeof r === 'string' ? JSON.parse(r) : r;
+    } catch {
+        const r = await executeProbeRpc(code, timeoutMs);
+        return typeof r === 'string' ? JSON.parse(r) : r;
+    }
+}
+
 export function setNodeTreeCache(tree: any): void {
     _nodeTreeCache = unwrapTreeNode(tree);
 }
@@ -212,16 +223,25 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
             try {
                 const r = await executeInPreview(code);
                 return typeof r === 'string' ? JSON.parse(r) : r;
-            } catch (e: any) {
-                const cached = findNodeInTree(unwrapTreeNode(_nodeTreeCache), args.uuid);
-                if (cached) {
-                    return {
-                        ...cached,
-                        _fromCache: true,
-                        _hint: '节点树缓存中的摘要信息；完整属性需 Creator 内预览或探针实时连接',
-                    };
+            } catch {
+                try {
+                    const r = await executeProbeRpc(code);
+                    const parsed = typeof r === 'string' ? JSON.parse(r) : r;
+                    if (parsed && parsed.error) {
+                        throw new Error(parsed.msg || parsed.error);
+                    }
+                    return parsed;
+                } catch (e: any) {
+                    const cached = findNodeInTree(unwrapTreeNode(_nodeTreeCache), args.uuid);
+                    if (cached) {
+                        return {
+                            ...cached,
+                            _fromCache: true,
+                            _hint: '节点树缓存中的摘要信息；完整属性需 Creator 内预览或探针实时连接',
+                        };
+                    }
+                    throw e;
                 }
-                throw e;
             }
         }
         case 'update_node_property': {
@@ -340,6 +360,45 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
 
             const cloned = JSON.parse(JSON.stringify(rawTree));
             return trimTree(cloned, maxDepth);
+        }
+        case 'control_engine': {
+            const action = escapeJsString(String(args.action || 'toggle_pause'));
+            const code = `
+                (function(){
+                    try {
+                        var eng = window.cc;
+                        if (!eng || !eng.game) return JSON.stringify({ error: 'Engine not ready' });
+                        var a = '${action}';
+                        if (a === 'toggle_pause') {
+                            if (eng.game.isPaused()) eng.game.resume(); else eng.game.pause();
+                            return JSON.stringify({ success: true, paused: eng.game.isPaused() });
+                        }
+                        if (a === 'pause') { eng.game.pause(); return JSON.stringify({ success: true, paused: true }); }
+                        if (a === 'resume') { eng.game.resume(); return JSON.stringify({ success: true, paused: false }); }
+                        if (a === 'step') {
+                            if (!eng.game.isPaused()) eng.game.pause();
+                            eng.game.step();
+                            return JSON.stringify({ success: true, paused: true });
+                        }
+                        if (eng.audioEngine) {
+                            if (a === 'mute_on') {
+                                if (typeof eng.audioEngine.setMusicVolume === 'function') eng.audioEngine.setMusicVolume(0);
+                                if (typeof eng.audioEngine.setEffectsVolume === 'function') eng.audioEngine.setEffectsVolume(0);
+                                return JSON.stringify({ success: true, muted: true });
+                            }
+                            if (a === 'mute_off') {
+                                if (typeof eng.audioEngine.setMusicVolume === 'function') eng.audioEngine.setMusicVolume(1);
+                                if (typeof eng.audioEngine.setEffectsVolume === 'function') eng.audioEngine.setEffectsVolume(1);
+                                return JSON.stringify({ success: true, muted: false });
+                            }
+                        }
+                        return JSON.stringify({ error: 'Unknown action: ' + a });
+                    } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
+                })();
+            `;
+            const parsed = await executeRuntimeJs(code);
+            if (parsed && parsed.error) throw new Error(parsed.msg || parsed.error);
+            return parsed;
         }
         default:
             throw new Error(`Relay 不支持工具: ${name}`);

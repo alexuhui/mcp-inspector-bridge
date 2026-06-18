@@ -44,7 +44,42 @@
 
 ---
 
-## [0.1.6] - 2026-05-14
+## [Unreleased] - VS Code 扩展 Phase 3
+
+### ✨ 新特性（0.1.8 — 阶段 C）
+
+- **多标签侧栏**：性能 / 内存 / 引擎 / 渲染 / 脚本
+- **属性可编辑**：number / string / boolean 组件属性 → `update_node_property`
+- **性能面板**：`get_runtime_stats` 500ms 轮询（FPS、DrawCall、Logic/Render ms）
+- **内存榜**：`get_memory_ranking` Bundle 排行
+- **引擎控制**：`control_engine`（暂停/恢复、单帧、静音）
+- **渲染调试**：订阅 `render-debugger-payload` 只读 JSON
+- **脚本列表**：`list_scripts`（编辑请在 VS Code 打开 `extensions/*.user.js`）
+- **状态持久化**：webview `setState` 保留当前 tab、搜索词、选中节点
+- **后端** `executeRuntimeJs` + `control_engine` relay 工具
+
+### 📦 扩展版本
+
+- `cocos-mcp-inspector` **0.1.8**
+
+---
+
+## [Unreleased] - VS Code 扩展 Phase 2.5–B
+
+### ✨ 新特性
+
+- **探针 WS RPC**：`get_node_detail` 支持 WebContents → 探针 RPC → 树缓存三段降级
+- **侧栏节点树自动同步**：探针 `update-tree` 推送时自动更新，顶部显示同步状态
+- **节点树搜索**：关键词 AND 匹配节点名与组件名，严格路径过滤
+- **属性结构化展示**：基础字段 + 组件折叠列表 + 原始 JSON
+- **多实例选择**：状态栏点击 QuickPick 切换 `bridgePort`
+- **DevTools 外链**：命令打开预览页并提示 `chrome://inspect`
+
+### 📦 扩展版本
+
+- `cocos-mcp-inspector` **0.1.7**
+
+---
 
 ### ✨ 新特性
 
