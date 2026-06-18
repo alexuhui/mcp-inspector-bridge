@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { BridgeClient, configureCursorMcp } from './bridge/ws-client';
 import { InspectorPanelProvider } from './panels/inspector-provider';
+import { openPreviewInEditor } from './panels/preview-panel';
 
 let statusBarItem: vscode.StatusBarItem;
 let bridgeClient: BridgeClient;
@@ -22,8 +23,26 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('cocosInspector.open', () => {
+        vscode.commands.registerCommand('cocosInspector.open', async () => {
+            const previewInEditor = vscode.workspace.getConfiguration('cocosInspector').get<boolean>('previewInEditor') !== false;
+            if (previewInEditor) {
+                try {
+                    await openPreviewInEditor(bridgeClient, context.extensionUri);
+                } catch (e: any) {
+                    vscode.window.showErrorMessage(e.message);
+                }
+            }
             vscode.commands.executeCommand('cocosInspector.panel.focus');
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cocosInspector.openPreview', async () => {
+            try {
+                await openPreviewInEditor(bridgeClient, context.extensionUri);
+            } catch (e: any) {
+                vscode.window.showErrorMessage(e.message);
+            }
         })
     );
 
@@ -51,10 +70,15 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // 启动时尝试静默连接
+    // 启动时尝试静默连接，并在启用时将预览放到编辑器区域
     bridgeClient.connect(vscode.workspace.getConfiguration('cocosInspector').get<number>('bridgePort') || 0)
-        .then((inst) => {
+        .then(async (inst) => {
             statusBarItem.text = `$(debug-start) Cocos: ${inst.projectName}`;
+            if (vscode.workspace.getConfiguration('cocosInspector').get<boolean>('previewInEditor') !== false) {
+                try {
+                    await openPreviewInEditor(bridgeClient, context.extensionUri);
+                } catch (_) { /* 预览未就绪时忽略 */ }
+            }
         })
         .catch(() => { /* 静默失败 */ });
 }

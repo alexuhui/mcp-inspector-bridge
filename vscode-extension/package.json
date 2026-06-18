@@ -2,7 +2,7 @@
   "name": "cocos-mcp-inspector",
   "displayName": "Cocos MCP Inspector",
   "description": "Cocos Creator 运行时审查面板 — 在 Cursor/VS Code 中连接 mcp-inspector-bridge",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "publisher": "firekula",
   "license": "MIT",
   "engines": {
@@ -14,6 +14,7 @@
   ],
   "activationEvents": [
     "onCommand:cocosInspector.open",
+    "onCommand:cocosInspector.openPreview",
     "workspaceContains:**/project.json"
   ],
   "main": "./dist/extension.js",
@@ -27,6 +28,11 @@
       {
         "command": "cocosInspector.connect",
         "title": "Cocos Inspector: 连接 Bridge",
+        "category": "Cocos"
+      },
+      {
+        "command": "cocosInspector.openPreview",
+        "title": "Cocos Inspector: 在编辑器打开预览",
         "category": "Cocos"
       },
       {
@@ -64,7 +70,21 @@
         "cocosInspector.useProbeProxy": {
           "type": "boolean",
           "default": false,
-          "description": "预览走探针代理页（仅当节点树无法同步且不需 Creator 预览窗时开启；默认直连预览端口）"
+          "description": "侧栏 iframe 预览走探针代理（仅侧栏内嵌预览时有效；编辑器预览始终直连 Creator 预览端口）"
+        },
+        "cocosInspector.previewInEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "将游戏预览显示在编辑器区域（代码区），侧栏仅保留节点树与属性面板"
+        },
+        "cocosInspector.previewMode": {
+          "type": "string",
+          "enum": [
+            "simpleBrowser",
+            "webview"
+          ],
+          "default": "simpleBrowser",
+          "description": "编辑器预览加载方式：simpleBrowser（推荐，直接加载预览页）或 webview（iframe 嵌入）"
         }
       }
     }

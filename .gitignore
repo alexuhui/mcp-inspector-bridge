@@ -1,6 +1,7 @@
 # Compiled and build output
 dist/
 *.js.map
+*.vsix
 
 # Logs
 logs/

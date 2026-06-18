@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { BridgeClient } from '../bridge/ws-client';
+import { getPreviewSrc, openPreviewInEditor } from './preview-panel';
 
 export class InspectorPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cocosInspector.panel';
@@ -21,6 +22,12 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = this.getLoadingHtml();
 
+        webviewView.onDidChangeVisibility(() => {
+            if (webviewView.visible) {
+                this.refresh(webviewView);
+            }
+        });
+
         this.refresh(webviewView);
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
@@ -33,6 +40,10 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
                 }
             } else if (msg.type === 'refresh') {
                 this.refresh(webviewView);
+            } else if (msg.type === 'openPreviewInEditor') {
+                openPreviewInEditor(this.bridge, this.extensionUri).catch((e: Error) => {
+                    vscode.window.showErrorMessage(e.message);
+                });
             }
         });
     }
@@ -44,13 +55,22 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
             await this.bridge.connect(preferredPort);
             const info = await this.bridge.getPreviewInfo();
             const useProbeProxy = config.get<boolean>('useProbeProxy') === true;
-            const previewSrc = (useProbeProxy && info.probeProxyUrl) ? info.probeProxyUrl : info.previewUrl;
+            const previewInEditor = config.get<boolean>('previewInEditor') !== false;
+            const previewSrc = getPreviewSrc(info, useProbeProxy);
 
             this.bridge.subscribe((event) => {
                 webviewView.webview.postMessage({ type: 'bridgeEvent', event });
             });
 
-            webviewView.webview.html = this.getPanelHtml({ ...info, previewUrl: previewSrc }, useProbeProxy);
+            if (previewInEditor) {
+                openPreviewInEditor(this.bridge, this.extensionUri).catch(() => { /* 侧栏仍展示节点树 */ });
+            }
+
+            webviewView.webview.html = this.getPanelHtml(
+                { ...info, previewUrl: previewSrc },
+                useProbeProxy,
+                previewInEditor,
+            );
         } catch (e: any) {
             webviewView.webview.html = this.getErrorHtml(e.message);
         }
@@ -81,11 +101,23 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
 </body></html>`;
     }
 
-    private getPanelHtml(info: { previewUrl: string; projectName: string; bridgePort: number; hasPreview: boolean; probeProxyUrl?: string | null }, useProbeProxy = false): string {
+    private getPanelHtml(
+        info: { previewUrl: string; projectName: string; bridgePort: number; previewPort?: number; hasPreview: boolean; probeProxyUrl?: string | null },
+        useProbeProxy = false,
+        previewInEditor = false,
+    ): string {
         const previewSrc = info.previewUrl;
-        const modeHint = useProbeProxy && info.probeProxyUrl
-            ? `<span style="color:#dcdcaa;font-size:11px">代理预览</span>`
-            : '';
+        const modeHint = previewInEditor
+            ? `<span style="color:#9cdcfe;font-size:11px">编辑器直连 :${info.previewPort ?? ''}</span>`
+            : (useProbeProxy && info.probeProxyUrl
+                ? `<span style="color:#dcdcaa;font-size:11px">代理预览</span>`
+                : '');
+        const previewBlock = previewInEditor
+            ? ''
+            : `<div class="preview">
+      <iframe src="${previewSrc}" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+    </div>`;
+        const sidebarClass = previewInEditor ? 'sidebar sidebar-full' : 'sidebar';
         return `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8">
@@ -93,12 +125,13 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { display: flex; flex-direction: column; height: 100vh; background: #1e1e1e; color: #ccc; font-family: system-ui, sans-serif; font-size: 13px; }
-  header { padding: 8px 12px; background: #252526; border-bottom: 1px solid #3c3c3c; display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  header { padding: 8px 12px; background: #252526; border-bottom: 1px solid #3c3c3c; display: flex; gap: 8px; align-items: center; flex-shrink: 0; flex-wrap: wrap; }
   .status { color: #4ec9b0; }
   .layout { display: flex; flex: 1; min-height: 0; }
   .preview { flex: 1; min-width: 0; border-right: 1px solid #3c3c3c; }
   .preview iframe { width: 100%; height: 100%; border: none; background: #000; }
   .sidebar { width: 280px; display: flex; flex-direction: column; flex-shrink: 0; }
+  .sidebar-full { width: 100%; flex: 1; }
   .tabs { display: flex; background: #2d2d2d; }
   .tab { padding: 6px 12px; cursor: pointer; border-bottom: 2px solid transparent; }
   .tab.active { border-bottom-color: #0e639c; color: #fff; }
@@ -117,12 +150,11 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
     ${modeHint}
     <button onclick="loadTree()">刷新节点树</button>
     <button onclick="vscode.postMessage({type:'refresh'})">重连</button>
+    <button onclick="vscode.postMessage({type:'openPreviewInEditor'})">在编辑器打开预览</button>
   </header>
   <div class="layout">
-    <div class="preview">
-      <iframe src="${previewSrc}" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-    </div>
-    <div class="sidebar">
+    ${previewBlock}
+    <div class="${sidebarClass}">
       <div class="tabs">
         <div class="tab active" id="tab-tree">节点树</div>
         <div class="tab" id="tab-detail">属性</div>
