@@ -154,6 +154,11 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
                     description: "主动刷新 Cocos Creator 游戏预览窗口，使最新代码和资源在预览中生效。用于用户关闭自动刷新或预览未及时更新时调用。",
                     inputSchema: { type: "object", properties: {}, required: [] },
                 },
+                {
+                    name: "start_preview",
+                    description: "在 Creator 中启动游戏预览（等同点击工具栏预览按钮）。供 VS Code/Cursor 扩展 F5 一键预览使用。",
+                    inputSchema: { type: "object", properties: {}, required: [] },
+                },
             ],
         };
     });

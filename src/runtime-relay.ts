@@ -114,7 +114,7 @@ async function findPreviewWebContentsWithScene(): Promise<any | null> {
 export async function executeInPreview(code: string, timeoutMs = 4000): Promise<any> {
     const wc = await resolvePreviewWebContents();
     if (!wc) {
-        throw new Error('未找到 Creator 内预览 WebContents（外部预览请依赖探针 WebSocket 同步）');
+        throw new Error('未找到可执行运行时代码的预览 WebContents（请确认预览已运行，或等待探针同步完成）');
     }
     const result = wc.executeJavaScript(code);
     if (!result || typeof result.then !== 'function') {

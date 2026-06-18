@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as http from 'http';
 
 const DEFAULT_PORT = 4456;
 const MAX_PORT = 4556;
@@ -126,7 +127,7 @@ export class BridgeClient {
         });
     }
 
-    async callTool(name: string, args: Record<string, unknown> = {}): Promise<any> {
+    async callTool(name: string, args: Record<string, unknown> = {}, timeoutMs = 8000): Promise<any> {
         if (!this.port) await this.connect();
         const port = this.port!;
 
@@ -136,7 +137,7 @@ export class BridgeClient {
             const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             const timer = setTimeout(() => {
                 if (!done) { done = true; try { ws.close(); } catch (_) {} reject(new Error('Bridge 响应超时')); }
-            }, 8000);
+            }, timeoutMs);
 
             ws.on('open', () => {
                 ws.send(JSON.stringify({
@@ -193,6 +194,91 @@ export class BridgeClient {
                 if (!done) { done = true; clearTimeout(timer); reject(err); }
             });
         });
+    }
+
+    /** 检测 Creator 预览 HTTP 服务是否已响应（浏览器模式下列表树同步依赖此服务） */
+    async isPreviewServerReachable(previewUrl: string): Promise<boolean> {
+        if (!previewUrl) return false;
+        let url: URL;
+        try {
+            url = new URL(previewUrl);
+        } catch {
+            return false;
+        }
+        const port = url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80);
+        if (!port) return false;
+
+        return new Promise((resolve) => {
+            const req = http.request(
+                {
+                    hostname: url.hostname,
+                    port,
+                    path: url.pathname || '/',
+                    method: 'GET',
+                    timeout: 2500,
+                    headers: { accept: 'text/html' },
+                },
+                (res) => {
+                    res.resume();
+                    resolve((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 500);
+                },
+            );
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+            });
+            req.end();
+        });
+    }
+
+    /** 等待预览服就绪；若未运行则先调用 start_preview */
+    async ensurePreviewRunning(maxWaitMs = 45000): Promise<PreviewInfo> {
+        const deadline = Date.now() + maxWaitMs;
+        let info = await this.getPreviewInfo();
+
+        if (!(await this.isPreviewServerReachable(info.previewUrl))) {
+            try {
+                const result = await this.callTool('start_preview', {}, 20000);
+                if (result?.isError) {
+                    const errText = result.content?.[0]?.text || '';
+                    // IPC 超时但 Creator 可能已开预览（如弹出 Chrome），继续轮询
+                    if (!errText.includes('超时') && !errText.includes('timeout')) {
+                        throw new Error(errText || 'start_preview 失败');
+                    }
+                } else {
+                    try {
+                        const parsed = JSON.parse(result?.content?.[0]?.text || '{}');
+                        if (parsed.success === false) {
+                            throw new Error(parsed.message || 'Creator 未能启动预览');
+                        }
+                    } catch (e: any) {
+                        if (e.message && !e.message.includes('JSON')) throw e;
+                    }
+                }
+            } catch (e: any) {
+                const msg = e.message || '';
+                if (!msg.includes('超时') && !msg.includes('timeout') && !msg.includes('Bridge 响应超时')) {
+                    throw e;
+                }
+                // 已发送 play-on-device，等待预览服编译完成
+            }
+        }
+
+        while (Date.now() < deadline) {
+            info = await this.getPreviewInfo();
+            if (await this.isPreviewServerReachable(info.previewUrl)) {
+                return { ...info, hasPreview: true };
+            }
+            await new Promise((r) => setTimeout(r, 500));
+        }
+
+        throw new Error(
+            '预览服务未在时限内就绪。请确认：\n' +
+            '1. Cocos Creator 已打开当前项目场景\n' +
+            '2. 工具栏预览模式为「浏览器」\n' +
+            '3. mcp-inspector-bridge 插件已加载',
+        );
     }
 
     subscribe(onMessage: (msg: any) => void): () => void {

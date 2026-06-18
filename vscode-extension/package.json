@@ -2,7 +2,7 @@
   "name": "cocos-mcp-inspector",
   "displayName": "Cocos MCP Inspector",
   "description": "Cocos Creator 运行时审查面板 — 在 Cursor/VS Code 中连接 mcp-inspector-bridge",
-  "version": "0.1.13",
+  "version": "0.1.17",
   "publisher": "firekula",
   "license": "MIT",
   "engines": {
@@ -13,10 +13,15 @@
     "Other"
   ],
   "activationEvents": [
+    "onDebugResolve:cocos-mcp-inspector",
+    "onDebugInitialConfigurations:cocos-mcp-inspector",
     "onCommand:cocosInspector.open",
     "onCommand:cocosInspector.openPreview",
+    "onCommand:cocosInspector.startPreview",
     "onCommand:cocosInspector.pickInstance",
     "onCommand:cocosInspector.openDevTools",
+    "onCommand:cocosInspector.connect",
+    "onCommand:cocosInspector.configureMcp",
     "workspaceContains:**/project.json"
   ],
   "main": "./dist/extension.js",
@@ -36,6 +41,12 @@
         "command": "cocosInspector.openPreview",
         "title": "Cocos Inspector: 在编辑器打开预览",
         "category": "Cocos"
+      },
+      {
+        "command": "cocosInspector.startPreview",
+        "title": "Cocos Inspector: 启动预览 (F5)",
+        "category": "Cocos",
+        "icon": "$(play)"
       },
       {
         "command": "cocosInspector.pickInstance",
@@ -71,6 +82,66 @@
         }
       ]
     },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cocosInspector.startPreview",
+          "group": "navigation@99",
+          "when": "cocosInspector.projectDetected"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cocosInspector.startPreview",
+        "key": "f5",
+        "when": "cocosInspector.projectDetected && config.cocosInspector.bindPreviewToF5"
+      },
+      {
+        "command": "-workbench.action.debug.start",
+        "key": "f5",
+        "when": "cocosInspector.projectDetected && config.cocosInspector.bindPreviewToF5"
+      },
+      {
+        "command": "-workbench.action.debug.run",
+        "key": "f5",
+        "when": "cocosInspector.projectDetected && config.cocosInspector.bindPreviewToF5"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "cocos-mcp-inspector",
+        "label": "Cocos Preview",
+        "languages": [
+          "typescript",
+          "javascript"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {}
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "cocos-mcp-inspector",
+            "request": "launch",
+            "name": "Cocos Preview in Editor"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Cocos: Preview in Editor",
+            "description": "F5 在编辑器内启动 Cocos 游戏预览（不打开 Chrome）",
+            "body": {
+              "type": "cocos-mcp-inspector",
+              "request": "launch",
+              "name": "Cocos Preview in Editor"
+            }
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "Cocos MCP Inspector",
       "properties": {
@@ -97,6 +168,11 @@
           ],
           "default": "simpleBrowser",
           "description": "编辑器预览加载方式：simpleBrowser（推荐，直接加载预览页）或 webview（iframe 嵌入）"
+        },
+        "cocosInspector.bindPreviewToF5": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 Cocos 项目工作区将 F5 绑定为「启动预览」（与 VS Code 调试 F5 冲突时可关闭，改用手动命令）"
         }
       }
     }

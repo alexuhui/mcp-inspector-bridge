@@ -257,20 +257,23 @@ async function openPreviewInEditorOnce(
 
     await closeStaleProxyPreviewTabs(info.bridgePort, info.projectName);
 
-    if (mode === 'simpleBrowser') {
-        const existing = findExistingPreviewTab(previewSrc, info.projectName, 'simpleBrowser');
-        if (existing && !forceReload) {
-            await focusExistingPreviewTab(existing);
-            return;
+    if (mode === 'webview') {
+        openPreviewWithWebviewPanel(extensionUri, info, previewSrc, title);
+        return;
+    }
+
+    const existing = findExistingPreviewTab(previewSrc, info.projectName, 'simpleBrowser');
+    if (existing && !forceReload) {
+        await focusExistingPreviewTab(existing);
+        return;
+    }
+    const ok = await openPreviewWithSimpleBrowser(previewSrc, info.projectName, forceReload);
+    if (ok) {
+        if (currentPanel) {
+            currentPanel.dispose();
+            currentPanel = undefined;
         }
-        const ok = await openPreviewWithSimpleBrowser(previewSrc, info.projectName, forceReload);
-        if (ok) {
-            if (currentPanel) {
-                currentPanel.dispose();
-                currentPanel = undefined;
-            }
-            return;
-        }
+        return;
     }
 
     openPreviewWithWebviewPanel(extensionUri, info, previewSrc, title);

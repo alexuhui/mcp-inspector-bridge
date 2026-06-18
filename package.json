@@ -11,7 +11,7 @@
 		"watch": "tsc -w & esbuild src/probe/index.ts --bundle --outfile=dist/probe.js --watch & esbuild src/mcp-client/index.ts --bundle --platform=node --outfile=dist/mcp-client/index.js --watch"
 	},
 	"main-menu": {
-		"MCP 桥接器/开启运行时面板": {
+		"MCP 桥接器/后台桥接状态": {
 			"message": "mcp-inspector-bridge:open"
 		}
 	},

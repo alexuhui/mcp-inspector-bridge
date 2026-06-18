@@ -1,269 +1,204 @@
 # MCP Inspector Bridge
 
-> 专为 **Cocos Creator 2.4.x** 打造的现代化运行时节点审查与 DevTools 桥接插件。
+> Cursor-first 的 Cocos Creator 运行时审查桥接方案。
 
-基于 Vue 3 + Electron BrowserView 架构，提供双分栏沉浸式调试体验：左侧游戏预览、右侧节点树/属性检查/DevTools/性能分析，彻底解决原版内嵌 Chromium DevTools 的挂起死锁问题。
+这个仓库的目标已经从“Creator 面板优先”调整为：
+
+- **Cursor / VS Code 是主入口**
+- **Cocos Creator 只负责后台 bridge 和运行时预览**
+- **预览默认显示在编辑器里，而不是 Chrome 或 Creator 新窗口**
+- **按 `F5` 可以直接启动当前工作区对应项目的预览**
 
 ---
 
-## 🚀 快速开始
+## 适合什么场景
 
-### 环境要求
+如果你希望：
 
-- Cocos Creator **2.4.x** （广泛兼容官方原版以及魔改升级至 Electron 14+ 的特殊高版本环境）
-- Node.js ≥ 14
+- 不打开 Chrome 预览
+- 不让 Cocos Creator 再弹一个独立预览窗口
+- 在 Cursor 里直接看节点树、属性、日志、性能
+- 通过 `F5` 启动当前项目预览
+- 用 MCP 把运行时能力接到 AI / Cursor
 
-### 安装
+那么这个项目就是为这个工作流设计的。
 
-将本项目克隆或复制到 Cocos Creator 的插件目录中：
+---
 
-```bash
-# 全局插件目录
-~/.CocosCreator/packages/mcp-inspector-bridge/
+## Cursor-first 工作流
 
-# 或项目级插件目录
-your-project/packages/mcp-inspector-bridge/
+### 1. 打开 Cocos 项目
+在 Cursor 中打开你的 Cocos Creator 项目工作区。
+
+### 2. 安装扩展
+安装 `vscode-extension` 打包出的 VSIX 到 Cursor。
+
+### 3. 连接 Bridge
+扩展会自动扫描运行中的 Cocos Creator 实例，也可以手动点击状态栏选择实例。
+
+### 4. 按 `F5` 启动预览
+在 Cocos 工作区中，`F5` 会被接管为：
+
+- 触发 Creator 预览
+- 等待预览服务就绪
+- 在 Cursor / VS Code 内打开预览
+
+### 5. 使用侧栏审查
+侧栏可查看：
+
+- 节点树
+- 属性
+- 性能
+- 内存
+- 引擎控制
+- 渲染调试
+- 脚本
+
+---
+
+## 目录结构
+
+```text
+mcp-inspector-bridge/
+├── src/                     # Cocos Creator 侧后台 bridge / probe / IPC
+├── vscode-extension/        # Cursor / VS Code 主插件
+├── dist/                    # 构建产物
+└── specs/                   # 相关规范与说明
 ```
 
-### 构建
+---
 
-```bash
-# 安装依赖（包含 esbuild）
+## 工作流概览
+
+### 1. Cocos Creator 侧
+Creator 插件负责：
+
+- 启动 WebSocket bridge
+- 扫描运行中的项目实例
+- 触发预览启动
+- 提供节点树、属性、日志、性能等运行时数据
+- 注入 probe 到预览页面
+
+### 2. Cursor / VS Code 侧
+扩展负责：
+
+- 自动连接 bridge
+- 在侧栏显示节点树和属性
+- 在编辑器中打开预览
+- 通过 `F5` 启动预览
+- 管理多实例连接
+- 配置 Cursor MCP
+
+---
+
+## 安装与构建
+
+### 安装依赖
+
+```bat
 npm install
+```
 
-# 编译 TypeScript + 打包探针模块与 MCP 客户端
+### 构建主插件
+
+```bat
 npm run build
 ```
 
-#### Windows 一键构建（推荐）
-
-为避免本机 Node 版本/架构不一致导致的 `esbuild` 问题，仓库根目录提供了可直接运行的 bat 脚本：
+### 构建主插件 + VS Code 扩展
 
 ```bat
-:: 1) 全量清理（可选）
-clean-win.bat
-
-:: 2) 构建主插件（dist/probe.js + dist/mcp-client/index.js）
-build-win.bat
-
-:: 3) 构建主插件 + vscode-extension
-build-all-win.bat
+npm run build:all
 ```
 
-说明：
+### Windows 一键构建
 
-- `build-win.bat` 会自动执行依赖安装、`tsc` 编译、`esbuild` 打包。
-- `build-all-win.bat` 会先调用 `build-win.bat`，再构建 `vscode-extension` 子包。
-- `clean-win.bat` 会清理 `node_modules`、`dist`、`vscode-extension/dist`，用于“全量重装再构建”。
-- `package-vsix-win.bat` 会先执行 `build-all-win.bat`，再通过 `.tools/vsce-packager` 中的隔离 `vsce@2.7.0` 打包 `vscode-extension/*.vsix`（供 Cursor「从 VSIX 安装」；固定 `cheerio@1.0.0-rc.12`，避免 Node 16 下 `undici` 报错）。
-- 若终端出现 `optional SKIPPING OPTIONAL DEPENDENCY`，通常是跨平台可选依赖提示，可忽略。
-
-### 使用
-
-1. 在 Cocos Creator 中打开任意场景
-2. 菜单栏 → **MCP 桥接器** → **开启运行时面板**（可选；也可仅用 VS Code 扩展 + headless bridge）
-3. 点击 **预览运行** 按钮，插件面板将自动捕获游戏预览并加载节点树
-
-### Cursor / VS Code 扩展
-
-同仓库 `vscode-extension/` 子包提供侧栏节点树与属性检查，预览可显示在编辑器区域：
+仓库根目录提供了几个常用脚本：
 
 ```bat
+clean-win.bat
+build-win.bat
 build-all-win.bat
 package-vsix-win.bat
 ```
 
-在 Cursor 中：**扩展 → 从 VSIX 安装**，然后 Reload Window。
+建议流程：
+
+1. 先运行 `build-all-win.bat`
+2. 再运行 `package-vsix-win.bat`
+3. 在 Cursor 中通过“从 VSIX 安装”安装扩展
+
+---
+
+## 主要命令
+
+在命令面板里可以使用：
+
+- `Cocos Inspector: 选择 Bridge 实例`
+- `Cocos Inspector: 连接 Bridge`
+- `Cocos Inspector: 启动预览 (F5)`
+- `Cocos Inspector: 在编辑器打开预览`
+- `Cocos Inspector: 打开预览页 / DevTools`
+- `Cocos Inspector: 配置 Cursor MCP`
+
+---
+
+## 关键设置
 
 | 设置项 | 说明 |
 |--------|------|
-| `cocosInspector.previewInEditor` | `true`（默认）：预览在代码区，侧栏仅节点树/属性 |
-| `cocosInspector.previewMode` | `simpleBrowser`（推荐）或 `webview` |
-| `cocosInspector.useProbeProxy` | 仅侧栏内嵌预览时有效；编辑器预览始终直连 Creator 端口 |
-| `cocosInspector.bridgePort` | `0` = 自动扫描；多开 Creator 时点击状态栏选择实例 |
-
-命令面板：`Cocos Inspector: 选择 Bridge 实例` / `在编辑器打开预览` / `打开预览页 / DevTools`
-
-**已知限制**（扩展 vs Creator 面板）：DevTools 无法内嵌、复杂属性只读、无屏幕拾取/Widget 编辑、资源定位降级等 — 详见 [specs/vscode-extension/known-limitations.md](./specs/vscode-extension/known-limitations.md)。
-
-**验收清单**：发版前可按 [specs/vscode-extension/e2e-checklist.md](./specs/vscode-extension/e2e-checklist.md) 逐项勾选。
+| `cocosInspector.bridgePort` | 手动指定 Bridge 端口，`0` 表示自动扫描 |
+| `cocosInspector.previewInEditor` | 是否把预览显示在编辑器区域，默认 `true` |
+| `cocosInspector.previewMode` | 预览打开方式：`simpleBrowser` 或 `webview` |
+| `cocosInspector.bindPreviewToF5` | 是否在 Cocos 工作区把 `F5` 绑定为预览启动，默认 `true` |
+| `cocosInspector.useProbeProxy` | 仅侧栏内嵌预览时有效，编辑器预览仍直连 Creator 端口 |
 
 ---
 
-## ✨ 核心特性
+## 已知限制
 
-### 🖥️ 双分栏工作流
+当前方案的边界是：
 
-采用 Vue 3 构建主面板，左侧 Webview 渲染游戏视口，右侧集成多功能调试标签页，实现"边玩边审"的沉浸式体验。
+- 预览运行时仍然依赖 Cocos Creator 的预览能力
+- 不是完全脱离 Creator 的纯前端方案
+- 某些深度运行时能力仍需要 Creator 侧 bridge 和 probe 配合
+- `DevTools` 不会完全替代 Creator 内部调试器
 
-### ⚡ 运行时探针与节点树
+但和原始工作流相比，默认体验已经转为：
 
-基于预加载脚本 (`preload.ts`) 无侵入注入探针至游戏运行时，实时截获完整节点树结构。
-
-- **多关键词穿透搜索**：支持空格分词的 AND 逻辑匹配，可穿透至组件类名层级搜索（如输入 `Animation` 定位所有挂载该组件的节点）
-- **严格路径过滤**：搜索结果仅展示命中节点及其直系祖先，自动隐藏无关分支
-- **空白区域取消选中**：点击空白即可清除所有焦点，联动属性面板归零与高亮退场
-
-### 🎯 节点高亮与屏幕拾取
-
-- **包围盒高亮**：鼠标悬停/选中节点时，游戏画面实时渲染精准的贴边多边形轮廓，零宽高节点自动降级为十字准星
-- **屏幕拾取器**：直接在游戏画面中点击选取节点，基于多摄像机阵列扫描 + CullingMask 分组继承 + 面积权重透层算法，完美适配多镜头、多分组、Fit 缩放等复杂场景
-
-### 🤖 AI MCP 集成桥 (Multi-Instance Ready)
-
-为 LLM (大模型如 Claude/Cursor) 提供双端通信与跨进程的游戏引擎交互视界。
-- **多实例动态寻址 (Multi-Instance Support)**：内置 `EADDRINUSE` 冲突递增机制，支持同时开启多个编辑器实例，实现不同项目端口的自动隔离（默认 4456）。
-- **基于项目身份的握手协议**：心跳回执注入 `projectName` 与 `projectPath`，允许 AI 快速识别目标平行宇宙。
-- **多端全平台自动配置**：支持向 22 款主流 AI 客户端（如 Claude Desktop、Cursor 等）进行自动探测与免配桥接。
-- **MCP 路由工具扩展**：提供 `get_active_instances` 扫描活跃端口、`set_active_instance` 绑定指定项目端口、以及 `refresh_preview` 主动刷新游戏预览窗口。
-- **环境安全异常零漏截获 (Eager Log Capture)**：针对 Webview 预览采用 CDP `Runtime.consoleAPICalled` 零注入被动监听（非侵入式，完美保留 DevTools 源归属）；针对 BrowserView 采用原生 `console-message` 事件。双重防御配合每秒后台激进式探测定时器，在游戏初始化第一帧即接管日志，彻底杜绝早期生命周期错误丢失。CDP 不可用时自动降级至注入方案。
-- **超保真渲染验证实况图**：直接为大语言模型一键注入运行时截图，打破次元壁。
-- **可视化 MCP 通信降维打击 (Debug Console)**：在偏好设置面板内置专属通信日志流，实时抓取前后端请求细节与返回结构；更具备极致的数据防爆护城河（自动截断长字符串与双峰队首淘汰流控机制），轻松排查大语言建模幻觉与传输丢包。
-
-### 🔍 属性检查器
-
-**遵循现代化卡片化 UI 设计规范 (Modern Card-based UI)**，选中节点后实时展示结构清晰、分栏合理的组件属性库：
-
-- **双向属性同步与编辑**：`number` / `string` / `boolean` 以及现代化多行下潜渲染的 `array`、`Anchor`、`Color`、`Opacity`、`Group` 等全景属性双向实时更新；`string` 属性支持多行文本编辑 (textarea 替代 input，Enter 键插入换行)；并且内置 0.5 秒高频属性轮询挂载鼠标与焦点双重意图拦截保护，在节点产生自动动画、物理位移时实现完美的数据追平，而在用户试图编辑时自动停止刷新以防光标跳跃。
-- **纯运行时注入**：所有修改直接操作内存实例，不脏化编辑器 Scene 数据，无"是否保存"弹窗
-- **组件启停控制**：统一的的复选开关 `enabled`，一键休眠/唤醒指定组件
-- **引用追踪定位 🎯**：节点级引用、资源字典、预制体地址均可无痛一键跳转定位归属并闪烁对焦
-- **智能枚举下拉**：基于运行时原型的强反射抓取，自动兼容多达 40 种官方内置枚举（诸如 `Sprite.type`) 以及业务测自定义枚举列表，拒绝盲填查字典的痛苦
-- **组件 JSON 免签分发**：点击组件 🖨️ 图标，将规避循环污染后的数据一键打印直出控制台绿幕，并自动顺时写入系统安全剪贴板
-- **节点对象直连控制台**：点击节点基础属性区右上角的 🖨️ 图标，将整个实例对象剥离序列化负担，直接交由 DevTools 原生审查，突破隐藏私有字段盲区
-
-
-### 📉 内存剖析器
-
-按 Bundle 分域聚合的资源内存排行榜：
-
-- **极值水位追踪**：实时记录每个 Bundle 的历史最高/最低内存，趋势箭头（↑↓）即时预警
-- **UUID 逆向解码**：自动将混淆的 UUID 还原为 `db://assets/textures/...` 可读路径
-- **一键资源定位 🎯**：点击即可在编辑器资源管理器中高亮对应文件
-- **宏观内存汇总**：榜单头部实时聚合由底层探针累加的总体内存消耗
-
-### 🩺 渲染调试器
-
-运行时 DrawCall 合批断流诊断：
-
-- **静默拦截**：AOP 劫持渲染管线，零控制台污染
-- **频次聚合**：Hash 去重 + 触发次数徽章，60FPS 连环断流也不卡
-- **帧快照三栏分析**：渲染命令树 / 单步回绘画布 / 管线参数明细
-- **逆向节点定位 📌**：从 DrawCall 直接跳转至游戏节点
-
-### 📊 实时性能叠加框
-
-在游戏预览区左上角渲染半透明 Vue 性能数据面板，彻底解决引擎内置 `cc.debug.setDisplayStats()` 在高分辨率/移动端预览下完全无法辨认的问题：
-
-- **帧率全维度**: 瞬时 FPS、平均帧率 (Avg)、1% Low FPS、0.1% Low FPS，基于 600 帧环形缓冲区逐帧统计百分位
-- **渲染指标**: DrawCall、Logic 耗时、Render 耗时
-- **资源概况**: 实时内存占用 (Mem)、场景节点总数 (Nodes)
-- **智能轮询**: 性能数据 200ms、内存 1s、节点计数 2s 三档独立速率，节点 O(n) 遍历开销可控
-- **颜色自适应**: 各项指标根据预设阈值独立着色（绿/橙/红），低帧阈值逐级放宽
-
-### ⏭️ 引擎控制
-
-- 暂停/恢复游戏引擎
-- 单帧步进
-- **FPS 叠加框开关** (替代引擎内置 FPS，控制插件叠加框显隐)
-- 全局静音
-
-### 🔭 全景环境探针
-- **动态图集监测 (Dynamic Atlas)**：实时查阅框架层 Dynamic Atlas 的详细开关设置与贴图出血 (Bleeding) 策略。
-- **动态图集高性能查看器 (High Performance Atlas Viewer)**：突破闭包壁垒实现 WebGL 显存级纹理直出。内置受控二维抛拽视口结构 (2D Transform Viewport)，支持超大缓冲纹理 (如 2048x2048) 的平移、无极中心滚轮缩放与首屏自适应显示，根除浏览器的 `zoom` 滚动条塌缩崩溃。
-- **2D 物理与碰撞洞察**：可随时监测物理系统 (PhysicsManager) 的宏观步进设置与复杂的调试遮罩 (DrawFlags)，以及基础碰撞组件 (CollisionManager) 的轮廓标记渲染开关。
-- **加载器快照追踪**：直接暴露底层环境下的 Downloader 核心池指标及并发状态。
-
-### 🎛️ 响应式界面
-
-- **分辨率模拟**：内建 32+ 款覆盖全生态的高精度设备分辨率预设（涵盖 iOS/iPadOS 新老阵营、安卓直板全档位、折叠屏全形态以及平板横向视口），完美支撑全场景安全区及越界适配检测，并支持一键横竖屏翻转。
-- **预制体资源定位器 (Prefab Asset Locator 🎯)**：自动侦测组件所在预制体并提供跳转捷径。
-- **响应式渲染诊断面板**：流体自适应的三列布局代替硬性百分比，并辅以无原生括号的极简说明文本。
-- **UI 无极缩放与字号解耦**：右侧特设“⚙️ 设置”，支持分别操控全局缩放比例（Zoom）以统御框架，或调节基础字号（Base Font）打磨排版，根除 1080P 或低分辨率下的拥挤死锁。
-- **检查器多维排版**：支持“横向/纵向”双模式切换，解除固有排版约束；节点树/属性面板尺寸任您拖动并自动持久保存。
-- **拖拽排序标签页**：自定义标签顺序，重启保持
-- **紧凑图标工具栏**：极窄面板下也不变形，悬浮提示补全信息
-- **防溢出画面**：双层 CSS 注入锁死滚动条，横竖屏均无杂物
-
-### 💾 偏好持久化
-
-分辨率、FPS 叠加框开关、静音状态、面板宽度等设置自动保存至项目级 `settings/` 目录，重启即恢复。
-
-### 🧼 零噪音调试
-
-默认静默所有探针日志，控制台 100% 留给游戏业务。需要排障时设置 `window.__MCP_DEBUG__ = true` 即可开启底层追踪。
+- **不打开 Chrome**
+- **不依赖 Creator 独立面板**
+- **Cursor / VS Code 作为主操作界面**
 
 ---
 
-## 🛡️ 稳定性保障
+## 这个仓库做了什么
 
-| 机制 | 说明 |
-|------|------|
-| **场景校验沙盒** | 以 IPC `isEditorSceneActive` 为唯一放行条件，未就绪时完全不访问预览服务器，根治 `stashScene` 崩溃 |
-| **后台挂起复原** | `ResizeObserver` + `pendingRefresh` 标记，后台切回自动恢复画面 |
-| **多实例端口适配** | 核心桥接器端口自动冲突探测并向上扫描，多开项目实例互不串台 |
-| **IPC 降级容错** | 原生通道失联时自动切入 DOM 轮询，2 秒后静默警告 |
-| **单向数据流** | 严格杜绝面板↔探针的 IPC 递归循环 |
-| **Scene 节点只读** | 自动拦截 `cc.Scene` 属性访问，防止引擎报错 |
-| **Electron 跨代容灾** | 针对移除了 `remote` 模块的高版本引警环境 (Electron 14+) 实施智能垫片防空回退，防止面板因强制解构陷入瘫痪白屏 |
-| **IPC 克隆防御隔离** | 将对象结构化克隆(`structuredClone`)降级为跨沙盒的安全 JSON 序列化，杜绝探针在上传不可克隆引用（如原型函数/DOM）时导致整条通信链挂起崩溃 |
+- 提供 Creator 侧 bridge 与 probe 注入
+- 提供 Cursor / VS Code 扩展
+- 提供 MCP 自动配置能力
+- 提供编辑器内预览与侧栏审查面板
+- 提供 F5 预览启动链路
 
 ---
 
-## 📦 项目结构
+## 开发说明
 
-```text
-mcp-inspector-bridge/
-├── package.json               # 插件清单与脚本定义
-├── main.js                    # Cocos 插件主进程入口
-├── dist/                      # 编译产物目录
-├── src/
-│   ├── main.ts                # 主进程逻辑 (IPC 注册、 BrowserView 管理)
-│   ├── preload.ts             # Webview 预加载脚本 (IPC 桥接 + 探针注入)
-│   ├── scene-script.ts        # 编辑器 Scene 进程脚本 (仅用于少量原生操作)
-│   ├── ipc-router.ts          # 分发 IPC 与 WebContents 异步交互路由
-│   ├── cdp-log-listener.ts    # CDP 日志监听器 (BrowserView 原生事件 / Webview CDP debugger / 注入降级)
-│   ├── panel/
-│   │   ├── index.ts           # 面板入口，Vue 3 应用挂载
-│   │   ├── index.html         # 面板 HTML 模板与样式
-│   │   ├── store.ts           # 全局响应式状态
-│   │   ├── composables/       # Vue Composable 模块
-│   │   │   ├── useLayout.ts   # 分辨率/布局/拖拽
-│   │   │   ├── useGameView.ts # 游戏视图生命周期
-│   │   │   ├── useDevTools.ts # DevTools BrowserView 管理
-│   │   │   ├── useNodeSystem.ts # 节点选择/属性系统
-│   │   │   ├── useProfiler.ts # 性能数据采集
-│   │   │   └── useTabs.ts     # 标签页排序
-│   │   └── components/        # Vue 组件
-│   │       ├── NodeTree.ts    # 节点树组件
-│   │       ├── NodeInspector.ts # 属性检查器
-│   │       ├── RenderDebugger.ts # 渲染调试器
-│   │       └── WidgetVisualizer.ts # Widget 可视化
-│   ├── mcp-client/            # MCP 原生客户端与服务层
-│   │   ├── index.ts           # MCP Stdio 服务器入口，处理多实例扫描与路由切换
-│   │   ├── tools.ts           # MCP 工具集定义 (ping, get_active_instances, etc.)
-│   │   ├── resources.ts       # MCP 资源订阅定义 (scene://hierarchy)
-│   │   ├── prompts.ts         # MCP 提示词下发策略
-│   │   └── configurator.ts    # 22+ 款主流 AI 客户端配置自动注入器
-│   └── probe/                 # 探针模块 (esbuild → dist/probe.js)
-│       ├── index.ts           # 探针主入口与生命周期
-│       ├── crawler.ts         # 节点树爬虫
-│       ├── highlighter.ts     # 高亮渲染层
-│       ├── picker.ts          # 屏幕拾取器
-│       ├── profiler.ts        # 帧率/耗时采集
-│       ├── memory.ts          # 内存资源扫描
-│       ├── render-debugger.ts # 渲染管线劫持
-│       └── logger.ts          # 调试日志门控
-├── memory/                    # 项目章程文档
-└── specs/                     # 功能规范文档
-```
+- **技术栈**：TypeScript + Vue 3 + Electron + Cocos Creator Extension API
+- **扩展入口**：`vscode-extension/src/extension.ts`
+- **Creator 主入口**：`src/main.ts`
+- **预览逻辑**：`vscode-extension/src/panels/preview-panel.ts`
+- **F5 预览**：`vscode-extension/src/debug-provider.ts`
 
 ---
 
-## 💡 开发说明
+## 说明
 
-- **技术栈**：TypeScript + Vue 3 + Electron BrowserView + Cocos Creator 2.4.x Extension API
-- **构建工具**：`tsc` (主面板) + `esbuild` (探针模块 IIFE 打包)
-- **监听模式**：`npm run watch` 可同时启动 tsc 和 esbuild 的文件监听
-- **调试开关**：在游戏预览的控制台中执行 `window.__MCP_DEBUG__ = true` 开启探针详细日志
-- **详细更新记录**：参见 [UPDATE_LOG.md](./UPDATE_LOG.md)
+如果你现在的目标是把工作流完全切到 Cursor，这个仓库已经在向那个方向演进：
+
+- Creator 退到后台
+- Cursor 变成主入口
+- 预览和审查都留在编辑器里
+- `F5` 直接启动预览
+
+后续如果你愿意，还可以继续把 Creator 面板相关内容进一步精简。

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { BridgeClient, configureCursorMcp } from './bridge/ws-client';
 import { InspectorPanelProvider } from './panels/inspector-provider';
-import { openPreviewInEditor } from './panels/preview-panel';
+import { runStartPreview } from './start-preview';
+import { registerCocosPreviewDebugProvider } from './debug-provider';
 
 let statusBarItem: vscode.StatusBarItem;
 let bridgeClient: BridgeClient;
@@ -51,14 +52,38 @@ async function pickAndConnectInstance(showMessage = true): Promise<void> {
     await connectToPort(picked.port, showMessage);
 }
 
+function syncCocosProjectContext(): void {
+    const detected = vscode.workspace.workspaceFolders?.some((folder) => {
+        const fs = require('fs') as typeof import('fs');
+        const path = require('path') as typeof import('path');
+        return fs.existsSync(path.join(folder.uri.fsPath, 'project.json'));
+    }) === true;
+    void vscode.commands.executeCommand(
+        'setContext',
+        'cocosInspector.projectDetected',
+        detected,
+    );
+}
+
 export function activate(context: vscode.ExtensionContext): void {
     bridgeClient = new BridgeClient();
 
+    syncCocosProjectContext();
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(syncCocosProjectContext),
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('cocosInspector')) {
+                syncCocosProjectContext();
+            }
+        }),
+    );
+
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.command = 'cocosInspector.pickInstance';
-    statusBarItem.text = '$(debug-disconnect) Cocos';
-    statusBarItem.tooltip = 'Cocos MCP Inspector — 点击选择实例';
+    statusBarItem.text = '$(debug-disconnect) Cocos Bridge';
+    statusBarItem.tooltip = 'Cursor-first Cocos Inspector — 点击选择实例';
     statusBarItem.show();
+    vscode.window.setStatusBarMessage('Cocos Inspector 已就绪：F5 启动预览，侧栏查看节点树。', 5000);
     context.subscriptions.push(statusBarItem);
 
     const provider = new InspectorPanelProvider(context.extensionUri, bridgeClient);
@@ -66,16 +91,28 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.registerWebviewViewProvider(InspectorPanelProvider.viewType, provider),
     );
 
+    registerCocosPreviewDebugProvider(context, bridgeClient);
+
     context.subscriptions.push(
         vscode.commands.registerCommand('cocosInspector.open', () => {
-            vscode.commands.executeCommand('cocosInspector.panel.focus');
+            void vscode.commands.executeCommand('cocosInspector.panel.focus');
+        }),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cocosInspector.startPreview', async () => {
+            try {
+                await runStartPreview(bridgeClient, context.extensionUri);
+            } catch (e: any) {
+                vscode.window.showErrorMessage(e.message);
+            }
         }),
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('cocosInspector.openPreview', async () => {
             try {
-                await openPreviewInEditor(bridgeClient, context.extensionUri);
+                await runStartPreview(bridgeClient, context.extensionUri);
             } catch (e: any) {
                 vscode.window.showErrorMessage(e.message);
             }
@@ -107,17 +144,11 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('cocosInspector.openDevTools', async () => {
             try {
+                await runStartPreview(bridgeClient, context.extensionUri, { forceReload: true });
                 const config = vscode.workspace.getConfiguration('cocosInspector');
-                const port = config.get<number>('bridgePort') || 0;
-                await bridgeClient.connect(port);
-                const info = await bridgeClient.getPreviewInfo();
-                if (!info.previewUrl) {
-                    throw new Error('预览地址为空，请先在 Creator 点击「预览运行」');
+                if (config.get<boolean>('previewInEditor') !== false) {
+                    vscode.window.showInformationMessage('预览已在编辑器中打开。');
                 }
-                await vscode.env.openExternal(vscode.Uri.parse(info.previewUrl));
-                vscode.window.showInformationMessage(
-                    '已打开预览页。如需调试运行时，请在 Chrome 访问 chrome://inspect',
-                );
             } catch (e: any) {
                 vscode.window.showErrorMessage(e.message);
             }
@@ -132,9 +163,11 @@ export function activate(context: vscode.ExtensionContext): void {
         }),
     );
 
-    pickAndConnectInstance(false)
-        .then(() => { /* 静默连接 */ })
-        .catch(() => { /* 静默失败 */ });
+    void pickAndConnectInstance(false).catch(() => { /* 静默失败 */ });
+
+    if (vscode.workspace.getConfiguration('cocosInspector').get<boolean>('bindPreviewToF5') !== false) {
+        void vscode.commands.executeCommand('setContext', 'cocosInspector.bindPreviewToF5', true);
+    }
 }
 
 export function deactivate(): void {

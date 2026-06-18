@@ -42,12 +42,17 @@ function dispatchToPanelWithTimeout(channel: string, args: any, timeoutMs = 3000
             reject(new Error(`RPC_TIMEOUT: 面板在 ${timeoutMs}ms 内未响应`));
         }, timeoutMs);
 
-        Editor.Ipc.sendToPanel('mcp-inspector-bridge', channel, args, (err: any, res: any) => {
-            if (isTimeout) return;
+        try {
+            Editor.Ipc.sendToPanel('mcp-inspector-bridge', channel, args, (err: any, res: any) => {
+                if (isTimeout) return;
+                clearTimeout(timer);
+                if (err) reject(err);
+                else resolve(res);
+            }, timeoutMs + 500);
+        } catch (e: any) {
             clearTimeout(timer);
-            if (err) reject(err);
-            else resolve(res);
-        }, timeoutMs + 500);
+            reject(new Error(`PANEL_UNAVAILABLE: ${e.message || 'bridge panel unavailable'}`));
+        }
     });
 }
 
@@ -123,15 +128,9 @@ async function dispatchToolCall(name: string, args: any, _reqId: string): Promis
 
     if (name === 'get_node_tree') {
         try {
-            const panelRes = await dispatchToPanelWithTimeout('mcp-query-tree', args, 5000);
-            if (panelRes && !panelRes.error) {
-                return { contentText: JSON.stringify(panelRes.result || panelRes, null, 2), isError: false };
-            }
-            if (panelRes?.error) {
-                relayErr = new Error(panelRes.error);
-            }
-        } catch {
-            /* MCP 面板未打开 */
+            await forceInjectProbe();
+        } catch (e: any) {
+            relayErr = relayErr || e;
         }
     }
 
@@ -265,7 +264,54 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                                 return;
                             }
 
-                            if (!TOOL_IPC_MAP[name] && name !== 'capture_runtime_screenshot' && !canRelayTool(name)) {
+                            if (name === 'start_preview') {
+                                try {
+                                    const startRes = await new Promise<any>((resolve, reject) => {
+                                        const timer = setTimeout(() => reject(new Error('start_preview 超时')), 15000);
+                                        Editor.Ipc.sendToMain(
+                                            'mcp-inspector-bridge:start-preview',
+                                            (err: any, res: any) => {
+                                                clearTimeout(timer);
+                                                if (err) reject(err);
+                                                else resolve(res);
+                                            },
+                                            16000,
+                                        );
+                                    });
+                                    const text = JSON.stringify(startRes || { success: true }, null, 2);
+                                    const isError = startRes && startRes.success === false;
+                                    emitMcpLog({
+                                        time: new Date().toLocaleTimeString(),
+                                        type: isError ? 'err' : 'res',
+                                        content: `[${name}]\nResult: ${text}`,
+                                    });
+                                    ws.send(JSON.stringify({
+                                        jsonrpc: '2.0',
+                                        id: reqId,
+                                        result: {
+                                            content: [{ type: 'text', text }],
+                                            isError,
+                                        },
+                                    }));
+                                } catch (err: any) {
+                                    emitMcpLog({
+                                        time: new Date().toLocaleTimeString(),
+                                        type: 'err',
+                                        content: `[${name}]\nError: ${err.message}`,
+                                    });
+                                    ws.send(JSON.stringify({
+                                        jsonrpc: '2.0',
+                                        id: reqId,
+                                        result: {
+                                            content: [{ type: 'text', text: `start_preview 失败: ${err.message}` }],
+                                            isError: true,
+                                        },
+                                    }));
+                                }
+                                return;
+                            }
+
+                            if (!TOOL_IPC_MAP[name] && name !== 'capture_runtime_screenshot' && name !== 'start_preview' && !canRelayTool(name)) {
                                 ws.send(JSON.stringify({
                                     jsonrpc: "2.0", id: reqId,
                                     result: { content: [{ type: "text", text: `Tool unknown: ${name}` }] }

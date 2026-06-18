@@ -26,9 +26,10 @@ let _logHeartbeatTimer: any = null;
 function isHeadlessMode(): boolean {
     try {
         const profile = Editor.Profile.load('profile://project/mcp-inspector-bridge.json', 'mcp-inspector-bridge');
-        return profile.get('headless') === true;
+        const value = profile.get('headless');
+        return value !== false;
     } catch (e) {
-        return false;
+        return true;
     }
 }
 
@@ -42,7 +43,9 @@ module.exports = {
         try {
             const router = startMcpRouter((status: any) => {
                 _mcpStatus = { ...status, projectName: getBaseName(Editor.Project.path || ''), projectPath: Editor.Project.path || '' };
-                Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-status-changed', _mcpStatus);
+                try {
+                    Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-status-changed', _mcpStatus);
+                } catch (_) { /* headless 模式下允许面板不存在 */ }
                 if (status.active) {
                     Editor.log(`[MCP] Bridge started on ws://localhost:${status.port}`);
                     startProbeInjector(status.port);
@@ -93,27 +96,45 @@ module.exports = {
     messages: {
         'scene:ready'() {
             _isSceneActive = true;
-            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: true });
+            try { Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: true }); } catch (_) {}
         },
         'scene:reloading'() {
             _isSceneActive = false;
-            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false });
+            try { Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false }); } catch (_) {}
         },
         'scene:closed'() {
             _isSceneActive = false;
-            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false });
+            try { Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false }); } catch (_) {}
         },
         'open'() {
             if (isHeadlessMode()) {
-                Editor.log('[MCP] Headless 模式：bridge 已在后台运行，无需打开 Creator 面板');
+                Editor.log('[MCP] Headless 模式：bridge 已在后台运行，Cursor/VS Code 可直接连接。');
                 return;
             }
-            // 收到菜单指令，打开主面板
-            Editor.Panel.open('mcp-inspector-bridge');
+            Editor.warn('[MCP] 当前已切换为 Cursor-first 工作流，Creator 仅保留后台桥接能力。');
+        },
+        /** 供 VS Code F5 / start_preview 工具调用，等同点击 Creator 工具栏 ▶ 预览 */
+        'start-preview'(event: any) {
+            if (!_isSceneActive) {
+                if (event.reply) {
+                    event.reply(null, { success: false, message: '场景未就绪，请先在 Creator 打开场景' });
+                }
+                return;
+            }
+            try {
+                // scene:play-on-device 常无回调或需等待编译；发送后即视为已触发，由客户端轮询预览端口
+                Editor.Ipc.sendToPanel('scene', 'scene:play-on-device');
+                if (event.reply) {
+                    event.reply(null, { success: true, message: '已触发 Creator 预览（预览服启动中）' });
+                }
+            } catch (e: any) {
+                if (event.reply) {
+                    event.reply(null, { success: false, message: e.message || '触发预览失败' });
+                }
+            }
         },
         'query-scene-active'(event: any) {
             if (event.reply) {
-                // 也可通过向 scene 面板发信检查双保险
                 const active = _isSceneActive !== false;
                 event.reply(null, active);
             }
@@ -124,13 +145,9 @@ module.exports = {
             }
         },
         'query-node-tree'(event: any) {
-            // 目前已经通过 probe/crawler 脚本使用了 setInterval 自动轮询并通过
-            // __mcpInspector.updateTree 自动推送。
-            // 这里保留该接口为下阶段“按需主动拉取”做能力支持，当面板明确通知主进程强制刷新时，从此处处理。
-            // 由于当前插件直接使用 <webview> 或前端控制的 BrowserView，主进程暂只作转发标记即可。
-            // 后续如有明确需求，此处可直接获取对应 webContents ID 执行 JS.
+            // 节点树由 probe/crawler 自动轮询并推送到 Cursor/VS Code 侧栏。
             if (event.reply) {
-                event.reply(null, { status: "polling_active", msg: "已经由注入的爬虫自动同步数据" });
+                event.reply(null, { status: 'polling_active', msg: '节点树已由后台探针自动同步' });
             }
         },
         'query-resolution'(event: any) {
