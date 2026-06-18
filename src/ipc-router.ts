@@ -13,6 +13,32 @@ import { forceInjectProbe } from './probe-injector';
 import { getPreviewProxyUrl, isPreviewProxyRunning, startPreviewProxy, stopPreviewProxy } from './preview-proxy';
 import { handleProbeRpcResponse, registerProbePeer, unregisterProbePeer } from './probe-rpc';
 
+async function waitForProbeReady(timeoutMs = 8000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (findPreviewWebContents()) {
+            try {
+                await forceInjectProbe();
+            } catch (e) {
+                // ignore and keep waiting
+            }
+        }
+        try {
+            const preview = findPreviewWebContents();
+            if (preview) {
+                const ready = await preview.executeJavaScript(`
+                    !!(window.__mcpProbeInitialized && window.__mcpWsBridgeReady)
+                `);
+                if (ready) return true;
+            }
+        } catch {
+            // page not ready yet
+        }
+        await new Promise((r) => setTimeout(r, 250));
+    }
+    return false;
+}
+
 const CACHE: Record<string, { timestamp: number, data: any }> = {};
 const subscribers = new Set<WebSocket.WebSocket>();
 
@@ -126,17 +152,21 @@ function handleCaptureScreenshot(ws: WebSocket.WebSocket, reqId: string) {
 async function dispatchToolCall(name: string, args: any, _reqId: string): Promise<{ contentText: string; isError: boolean }> {
     let relayErr: any = null;
 
-    if (name === 'get_node_tree') {
+    if (name === 'get_node_tree' || name === 'get_node_detail' || name === 'update_node_property') {
         try {
-            await forceInjectProbe();
+            await waitForProbeReady(9000);
         } catch (e: any) {
             relayErr = relayErr || e;
         }
     }
 
     if (canRelayTool(name)) {
-        if (name === 'get_node_tree') {
-            await forceInjectProbe();
+        if (name === 'get_node_tree' || name === 'get_node_detail' || name === 'update_node_property') {
+            try {
+                await waitForProbeReady(9000);
+            } catch (e: any) {
+                relayErr = relayErr || e;
+            }
         }
 
         try {

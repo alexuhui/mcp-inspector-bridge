@@ -23,10 +23,13 @@ import { initPicker } from './picker';
                     setTimeout(slimReady, 500);
                     return;
                 }
-                window.__mcpSyncNodeTree = syncNodeTree;
+                window.__mcpSyncNodeTree = function () {
+                    syncNodeTree();
+                    return window.__mcpLastTreePayload ? window.__mcpLastTreePayload.tree : null;
+                };
                 window.__mcpProbeInitialized = true;
             } catch (e) {
-                console.error('[Probe] slim init failed:', e);
+                Logger.error('[Probe] slim init failed:', e);
             }
         }
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -51,6 +54,7 @@ import { initPicker } from './picker';
     function initProbe() {
         try {
             if (typeof cc === 'undefined' || !cc.director || !cc.director.getScene()) {
+                Logger.warn('[Probe] wait scene ready before initProbe');
                 setTimeout(initProbe, 500);
                 return;
             }
@@ -143,12 +147,14 @@ import { initPicker } from './picker';
                 }
             }, 3000);
 
+            Logger.info('[Probe] init ready, do initial tree sync');
             // 第一次立刻拉取节点数据并回传，消除等待延迟
             syncNodeTree();
             
             // 定期提取节点树 (可优化为脏检测机制，此处暂以 interval 替代)
             setInterval(() => {
                 if (window.__mcpActiveTab !== undefined && window.__mcpActiveTab !== 0) return;
+                Logger.debug('[Probe] periodic tree sync tick');
                 syncNodeTree();
             }, DEBUG_INTERVAL);
 
@@ -165,7 +171,7 @@ import { initPicker } from './picker';
             startHighlighterHook();
 
         } catch (err) {
-            console.error('[Probe] 初始化探针发生致命异常:', err);
+            Logger.error('[Probe] 初始化探针发生致命异常:', err);
             const envData = {
                 url: window.location.href,
                 hasCC: typeof cc !== 'undefined',

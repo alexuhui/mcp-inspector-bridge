@@ -1,7 +1,16 @@
 // @ts-nocheck
 export function syncNodeTree() {
     const scene = window.cc ? window.cc.director.getScene() : null;
-    if (!scene) return;
+    if (!scene) {
+        Logger.warn('[Probe][Tree] skip sync: scene not ready');
+        return null;
+    }
+
+    const startedAt = Date.now();
+    Logger.info('[Probe][Tree] sync start', {
+        sceneName: scene.name || 'Scene',
+        childCount: scene.childrenCount || (scene.children ? scene.children.length : 0),
+    });
 
     const treeData = serializeNode(scene, 0);
     const pauseStatus = (typeof window.cc.game !== 'undefined' && window.cc.game.isPaused) ? window.cc.game.isPaused() : false;
@@ -13,9 +22,19 @@ export function syncNodeTree() {
         }
     } catch(e) {}
 
+    const payload = { tree: treeData, isPaused: pauseStatus, atlasCount: atlasCount };
+    window.__mcpLastTreePayload = payload;
     if (window.__mcpInspector && window.__mcpInspector.updateTree) {
-        window.__mcpInspector.updateTree(JSON.stringify({ tree: treeData, isPaused: pauseStatus, atlasCount: atlasCount }));
+        window.__mcpInspector.updateTree(JSON.stringify(payload));
+    } else {
+        Logger.warn('[Probe][Tree] updateTree channel missing');
     }
+    Logger.info('[Probe][Tree] sync done', {
+        elapsedMs: Date.now() - startedAt,
+        hasInspector: !!(window.__mcpInspector && window.__mcpInspector.updateTree),
+        childCount: treeData && treeData.children ? treeData.children.length : 0,
+    });
+    return treeData;
 }
 
 export function serializeNode(node, currentPrefabDepth = 0) {

@@ -18,8 +18,12 @@ function buildWsBridgeBootstrapLocal(port: number): string {
 }
 
 async function injectProbeIfNeeded(silent = true): Promise<boolean> {
+    if (!silent) Editor.log('[ProbeInjector] 尝试寻找预览 WebContents');
     const wc = await resolvePreviewWebContents();
-    if (!wc) return false;
+    if (!wc) {
+        if (!silent) Editor.warn('[ProbeInjector] 未找到预览 WebContents');
+        return false;
+    }
 
     const wcId = wc.id;
     try {
@@ -43,19 +47,42 @@ async function injectProbeIfNeeded(silent = true): Promise<boolean> {
         const probeContent = readProbeScript();
         const bootstrap = buildWsBridgeBootstrapLocal(_bridgePort);
 
+        if (!silent) {
+            Editor.log(`[ProbeInjector] 开始注入，wcId=${wcId}, bridgePort=${_bridgePort}`);
+            Editor.log(`[ProbeInjector] wc url=${wc.getURL ? wc.getURL() : 'n/a'}`);
+        }
+
+        await wc.executeJavaScript(`console.info('[ProbeInjector] bootstrap inject start', { wcId: ${wcId}, bridgePort: ${_bridgePort} })`);
         await wc.executeJavaScript(bootstrap);
+        await wc.executeJavaScript(`console.info('[ProbeInjector] ws bridge ready', { wcId: ${wcId}, bridgePort: ${_bridgePort} })`);
         await wc.executeJavaScript(probeContent);
         _lastInjectedWcId = wcId;
 
         try {
             await wc.executeJavaScript(`
                 (function(){
+                    console.info('[ProbeInjector] probe script loaded', { wcId: ${wcId}, bridgePort: ${_bridgePort} });
                     if (typeof window.__mcpSyncNodeTree === 'function') {
+                        console.info('[ProbeInjector] trigger initial tree sync');
                         window.__mcpSyncNodeTree();
+                    } else {
+                        console.warn('[ProbeInjector] __mcpSyncNodeTree missing after injection');
+                    }
+                    if (window.__mcpInspector && typeof window.__mcpInspector.sendHandshake === 'function') {
+                        try {
+                            window.__mcpInspector.sendHandshake(JSON.stringify({ injected: true, wcId: ${wcId}, bridgePort: ${_bridgePort} }));
+                            console.info('[ProbeInjector] handshake sent');
+                        } catch (e) {
+                            console.warn('[ProbeInjector] handshake failed', e && e.message ? e.message : e);
+                        }
+                    } else {
+                        console.warn('[ProbeInjector] inspector bridge missing for handshake');
                     }
                 })();
             `);
-        } catch { /* scene may not be ready yet */ }
+        } catch (e: any) {
+            if (!silent) Editor.warn('[ProbeInjector] 注入后初始化失败:', e.message);
+        }
 
         if (!silent) Editor.log(`[ProbeInjector] 已向预览页注入探针 (wcId=${wcId}, bridgePort=${_bridgePort})`);
         return true;

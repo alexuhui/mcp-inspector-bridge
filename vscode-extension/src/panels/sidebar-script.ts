@@ -10,6 +10,9 @@ export function buildSidebarScript(): string {
     let detailData = null;
     let detailText = '选中节点查看属性';
     let treeSyncHint = '';
+    let bridgeState = '连接中';
+    let previewState = '等待中';
+    let probeState = '等待中';
     let perfData = null;
     let memoryData = null;
     let scriptList = null;
@@ -40,6 +43,12 @@ export function buildSidebarScript(): string {
     function updateSyncHint() {
       const el = document.getElementById('sync-hint');
       if (el && el.textContent !== treeSyncHint) el.textContent = treeSyncHint;
+      const bridgeEl = document.getElementById('state-bridge');
+      const previewEl = document.getElementById('state-preview');
+      const probeEl = document.getElementById('state-probe');
+      if (bridgeEl) bridgeEl.textContent = bridgeState;
+      if (previewEl) previewEl.textContent = previewState;
+      if (probeEl) probeEl.textContent = probeState;
     }
 
     function setBridgeConnected(connected) {
@@ -47,18 +56,19 @@ export function buildSidebarScript(): string {
       const overlay = document.getElementById('bridge-overlay');
       if (dot) dot.classList.toggle('off', !connected);
       if (overlay) overlay.classList.toggle('show', !connected);
+      bridgeState = connected ? '已连接' : '断开';
       if (!connected) {
         stopPerfPoll();
         treeSyncHint = 'Bridge 已断开，正在等待重连...';
         updateSyncHint();
-      } else if (treeSyncHint.indexOf('断开') !== -1 || treeSyncHint.indexOf('重连') !== -1) {
-        treeSyncHint = '';
+      } else if (treeSyncHint.indexOf('断开') !== -1 || treeSyncHint.indexOf('重连') !== -1 || !treeData) {
+        treeSyncHint = 'Bridge 已连接，正在等待预览与探针就绪...';
         updateSyncHint();
       }
     }
 
     function loadTree() {
-      treeSyncHint = '手动刷新中...';
+      treeSyncHint = '正在请求节点树...';
       updateSyncHint();
       document.getElementById('tree').textContent = '加载中...';
       callTool('get_node_tree', { depth: 8 });
@@ -530,9 +540,17 @@ export function buildSidebarScript(): string {
 
     function handleTreeText(text) {
       try {
-        applyTreeData(unwrapTree(parseToolJson(text)), 'manual');
+        const parsed = parseToolJson(text);
+        applyTreeData(unwrapTree(parsed), 'manual');
+        treeSyncHint = '节点树已同步';
+        probeState = '已连接';
+        previewState = '已就绪';
+        updateSyncHint();
       } catch (e) {
         document.getElementById('tree').textContent = e.message;
+        treeSyncHint = e.message && e.message.indexOf('探针') !== -1 ? '正在等待预览探针连上...' : ('节点树同步失败：' + e.message);
+        probeState = e.message && e.message.indexOf('探针') !== -1 ? '等待中' : '异常';
+        updateSyncHint();
       }
     }
 
@@ -544,6 +562,10 @@ export function buildSidebarScript(): string {
         detailData = null;
         detailText = e.message;
       }
+      treeSyncHint = detailData && detailData._fromCache ? '正在等待探针连上，当前显示缓存摘要...' : '节点详情已同步';
+      probeState = detailData && detailData._fromCache ? '等待中' : '已连接';
+      previewState = detailData && detailData._fromCache ? '已就绪' : '已就绪';
+      updateSyncHint();
       if (activeTab === 'detail') renderDetailPanel();
     }
 

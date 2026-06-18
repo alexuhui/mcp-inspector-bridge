@@ -23,6 +23,20 @@ export interface PreviewInfo {
     hasPreview: boolean;
 }
 
+function formatTimeoutDiagnosis(context: string, details: Record<string, unknown> = {}): Error {
+    const lines = [
+        `Bridge 响应超时（${context}）`,
+        details.phase ? `阶段：${String(details.phase)}` : '',
+        details.port ? `Bridge 端口：${String(details.port)}` : '',
+        details.previewUrl ? `预览地址：${String(details.previewUrl)}` : '',
+        details.previewInfo ? `预览信息：${String(details.previewInfo)}` : '',
+        details.hasPreview === false ? '判断：Creator 预览尚未就绪' : '',
+        details.hasPreview === true ? '判断：Creator 预览已存在，但响应链路卡住' : '',
+        details.recommendation ? `建议：${String(details.recommendation)}` : '',
+    ].filter(Boolean);
+    return new Error(lines.join('\n'));
+}
+
 export class BridgeClient {
     private port: number | null = null;
     private subscribers: Array<(msg: any) => void> = [];
@@ -136,10 +150,29 @@ export class BridgeClient {
             const reqId = Date.now().toString();
             const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             const timer = setTimeout(() => {
-                if (!done) { done = true; try { ws.close(); } catch (_) {} reject(new Error('Bridge 响应超时')); }
+                if (!done) {
+                    done = true;
+                    try { ws.close(); } catch (_) {}
+                    const phase = name === 'start_preview' ? 'start_preview' : (name === 'get_node_tree' ? 'get_node_tree' : name);
+                    reject(formatTimeoutDiagnosis('工具调用超时', {
+                        phase,
+                        port,
+                        recommendation: '请检查 Creator 是否在响应、预览是否已启动、探针是否已经注入。',
+                    }));
+                }
             }, timeoutMs);
 
             ws.on('open', () => {
+                if (name === 'get_node_tree') {
+                    try {
+                        ws.send(JSON.stringify({
+                            jsonrpc: '2.0',
+                            method: 'tools/call',
+                            params: { name: 'get_preview_info', args: {} },
+                            id: `probe-${reqId}`,
+                        }));
+                    } catch (_) { /* ignore */ }
+                }
                 ws.send(JSON.stringify({
                     jsonrpc: '2.0',
                     method: 'tools/call',
@@ -173,7 +206,15 @@ export class BridgeClient {
             const reqId = Date.now().toString();
             const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             const timer = setTimeout(() => {
-                if (!done) { done = true; try { ws.close(); } catch (_) {} reject(new Error('preview/info 超时')); }
+                if (!done) {
+                    done = true;
+                    try { ws.close(); } catch (_) {}
+                    reject(formatTimeoutDiagnosis('preview/info 超时', {
+                        phase: 'preview/info',
+                        port,
+                        recommendation: '检查 Creator 主进程是否卡住，或预览是否尚未创建。',
+                    }));
+                }
             }, 5000);
 
             ws.on('open', () => {
@@ -237,12 +278,11 @@ export class BridgeClient {
         const deadline = Date.now() + maxWaitMs;
         let info = await this.getPreviewInfo();
 
-        if (!(await this.isPreviewServerReachable(info.previewUrl))) {
+        const tryStartPreview = async (): Promise<void> => {
             try {
                 const result = await this.callTool('start_preview', {}, 20000);
                 if (result?.isError) {
                     const errText = result.content?.[0]?.text || '';
-                    // IPC 超时但 Creator 可能已开预览（如弹出 Chrome），继续轮询
                     if (!errText.includes('超时') && !errText.includes('timeout')) {
                         throw new Error(errText || 'start_preview 失败');
                     }
@@ -261,8 +301,27 @@ export class BridgeClient {
                 if (!msg.includes('超时') && !msg.includes('timeout') && !msg.includes('Bridge 响应超时')) {
                     throw e;
                 }
-                // 已发送 play-on-device，等待预览服编译完成
             }
+        };
+
+        const reachable = await this.isPreviewServerReachable(info.previewUrl);
+        if (!reachable) {
+            await tryStartPreview();
+        }
+        if (!info.hasPreview) {
+            throw formatTimeoutDiagnosis('预览未就绪', {
+                phase: 'preview readiness',
+                port: info.bridgePort || this.port || undefined,
+                previewUrl: info.previewUrl,
+                hasPreview: false,
+                recommendation: 'Creator 还未创建可用预览页，正在继续等待探针注入。',
+            });
+        }
+
+        const startWait = Date.now();
+        const firstDelay = 1200;
+        if (Date.now() - startWait < firstDelay) {
+            await new Promise((r) => setTimeout(r, firstDelay));
         }
 
         while (Date.now() < deadline) {
@@ -273,12 +332,13 @@ export class BridgeClient {
             await new Promise((r) => setTimeout(r, 500));
         }
 
-        throw new Error(
-            '预览服务未在时限内就绪。请确认：\n' +
-            '1. Cocos Creator 已打开当前项目场景\n' +
-            '2. 工具栏预览模式为「浏览器」\n' +
-            '3. mcp-inspector-bridge 插件已加载',
-        );
+        throw formatTimeoutDiagnosis('预览服务未在时限内就绪', {
+            phase: 'preview readiness',
+            port: this.port || undefined,
+            previewUrl: info.previewUrl,
+            hasPreview: info.hasPreview,
+            recommendation: 'Creator 已连接但预览没有准备好；请检查场景是否已打开，或等待预览页注入完成。',
+        });
     }
 
     subscribe(onMessage: (msg: any) => void): () => void {

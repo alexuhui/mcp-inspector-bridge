@@ -145,7 +145,6 @@ module.exports = {
             }
         },
         'query-node-tree'(event: any) {
-            // 节点树由 probe/crawler 自动轮询并推送到 Cursor/VS Code 侧栏。
             if (event.reply) {
                 event.reply(null, { status: 'polling_active', msg: '节点树已由后台探针自动同步' });
             }

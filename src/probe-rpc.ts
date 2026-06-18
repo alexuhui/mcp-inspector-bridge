@@ -30,12 +30,24 @@ export function handleProbeRpcResponse(data: ProbeRpcResponse): boolean {
     return true;
 }
 
-export function executeProbeRpc(code: string, timeoutMs = PROBE_RPC_TIMEOUT_MS): Promise<string> {
-    const clients = [...probePeers].filter((ws) => ws.readyState === 1);
-    if (clients.length === 0) {
-        return Promise.reject(new Error('无已连接的探针客户端'));
+async function waitForProbePeer(timeoutMs: number): Promise<any | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const clients = [...probePeers].filter((ws) => ws.readyState === 1);
+        if (clients.length > 0) {
+            return clients[clients.length - 1];
+        }
+        await new Promise((r) => setTimeout(r, 250));
     }
-    return executeProbeRpcOn(clients[clients.length - 1], code, timeoutMs);
+    return null;
+}
+
+export async function executeProbeRpc(code: string, timeoutMs = PROBE_RPC_TIMEOUT_MS): Promise<string> {
+    const ws = await waitForProbePeer(timeoutMs);
+    if (!ws) {
+        throw new Error('无已连接的探针客户端');
+    }
+    return executeProbeRpcOn(ws, code, timeoutMs);
 }
 
 function executeProbeRpcOn(ws: any, code: string, timeoutMs: number): Promise<string> {
@@ -60,12 +72,13 @@ function executeProbeRpcOn(ws: any, code: string, timeoutMs: number): Promise<st
 
 /** 向所有已连接探针页广播执行（编辑器预览 + Creator 预览各自独立运行时） */
 export async function executeProbeRpcBroadcast(code: string, timeoutMs = PROBE_RPC_TIMEOUT_MS): Promise<string> {
-    const clients = [...probePeers].filter((ws) => ws.readyState === 1);
-    if (clients.length === 0) {
-        return Promise.reject(new Error('无已连接的探针客户端'));
+    const ws = await waitForProbePeer(timeoutMs);
+    if (!ws) {
+        throw new Error('无已连接的探针客户端');
     }
+    const clients = [...probePeers].filter((w) => w.readyState === 1);
     const results = await Promise.allSettled(
-        clients.map((ws) => executeProbeRpcOn(ws, code, timeoutMs)),
+        clients.map((clientWs) => executeProbeRpcOn(clientWs, code, timeoutMs)),
     );
     const ok = results.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
     if (ok.length > 0) {

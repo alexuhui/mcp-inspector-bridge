@@ -341,26 +341,52 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                     } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
                 })();
             `;
-            const r = await executeInPreview(code);
+            const r = await executeRuntimeJsBroadcast(code, 6000);
             return typeof r === 'string' ? JSON.parse(r) : r;
         }
         case 'get_node_tree': {
             const maxDepth = typeof args.depth === 'number' ? args.depth : 3;
-            let rawTree: any = unwrapTreeNode(_nodeTreeCache);
-            if (rawTree) {
-                const cloned = JSON.parse(JSON.stringify(rawTree));
-                return trimTree(cloned, maxDepth);
-            }
-
-            const fetchCode = `
+            const code = `
                 (function(){
                     try {
+                        var tree = null;
                         if (typeof window.__mcpSyncNodeTree === 'function') {
-                            window.__mcpSyncNodeTree();
+                            tree = window.__mcpSyncNodeTree();
                         }
-                        if (window.__mcpLastTreePayload && window.__mcpLastTreePayload.tree) {
-                            return JSON.stringify({ ok: true, tree: window.__mcpLastTreePayload.tree });
+                        if (!tree && window.__mcpLastTreePayload && window.__mcpLastTreePayload.tree) {
+                            tree = window.__mcpLastTreePayload.tree;
                         }
+                        if (!tree && window.__mcpCrawler && typeof window.__mcpCrawler.serializeSceneTree === 'function') {
+                            tree = window.__mcpCrawler.serializeSceneTree();
+                        }
+                        if (!tree && window.cc && window.cc.director && typeof window.cc.director.getScene === 'function') {
+                            var scene = window.cc.director.getScene();
+                            if (scene && window.__mcpCrawler && typeof window.__mcpCrawler.findNodeByUuid === 'function') {
+                                tree = window.__mcpCrawler.serializeSceneTree();
+                            }
+                        }
+                        if (tree) return JSON.stringify({ ok: true, tree: tree });
+                        return JSON.stringify({ ok: false, error: 'TREE_EMPTY', msg: '节点树尚未同步' });
+                    } catch (e) {
+                        return JSON.stringify({ ok: false, error: 'EXECUTION_FAILED', msg: e.message || String(e) });
+                    }
+                })();
+            `;
+            let parsed: any = null;
+            try {
+                parsed = await executeRuntimeJsBroadcast(code, 8000);
+            } catch (e) {
+                parsed = null;
+            }
+            const tree = parsed?.tree || parsed?.result?.tree || parsed;
+            if (tree && !parsed?.error) {
+                setNodeTreeCache(tree);
+                return trimTree(JSON.parse(JSON.stringify(unwrapTreeNode(tree))), maxDepth);
+            }
+
+            const direct = await executeRuntimeJs(`
+                (function(){
+                    try {
                         if (window.__mcpCrawler && typeof window.__mcpCrawler.serializeSceneTree === 'function') {
                             var tree = window.__mcpCrawler.serializeSceneTree();
                             if (tree) return JSON.stringify({ ok: true, tree: tree });
@@ -370,40 +396,13 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                         return JSON.stringify({ ok: false, error: 'EXECUTION_FAILED', msg: e.message || String(e) });
                     }
                 })();
-            `;
-
-            const wc = await resolvePreviewWebContents();
-            if (wc) {
-                try {
-                    const fetched = await executeInPreview(fetchCode, 8000);
-                    if (typeof fetched === 'string') {
-                        const parsed = JSON.parse(fetched);
-                        if (parsed.ok && parsed.tree) {
-                            rawTree = parsed.tree;
-                            setNodeTreeCache(rawTree);
-                        } else if (parsed.error && !rawTree) {
-                            throw new Error(parsed.msg || parsed.error);
-                        }
-                    }
-                } catch (e: any) {
-                    if (!rawTree) throw e;
-                }
+            `, 8000);
+            const directTree = direct?.tree || direct?.result?.tree || direct;
+            if (!directTree || direct?.error) {
+                throw new Error(direct?.msg || direct?.error || '节点树尚未同步');
             }
-
-            if (!rawTree) {
-                rawTree = unwrapTreeNode(_nodeTreeCache);
-            }
-
-            if (!rawTree) {
-                throw new Error(
-                    wc
-                        ? '节点树尚未同步，请稍候点击「刷新节点树」'
-                        : '节点树尚未同步。请打开 Creator 菜单「MCP 桥接器 → 开启运行时面板」并保持其中预览运行',
-                );
-            }
-
-            const cloned = JSON.parse(JSON.stringify(rawTree));
-            return trimTree(cloned, maxDepth);
+            setNodeTreeCache(directTree);
+            return trimTree(JSON.parse(JSON.stringify(unwrapTreeNode(directTree))), maxDepth);
         }
         case 'control_engine': {
             const action = escapeJsString(String(args.action || 'toggle_pause'));

@@ -43,7 +43,12 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             if (msg.type === 'callTool') {
                 try {
-                    const result = await this.bridge.callTool(msg.name, msg.args || {});
+                    const timeoutMs = msg.name === 'get_node_tree'
+                        ? 60000
+                        : (msg.name === 'get_node_detail' || msg.name === 'update_node_property'
+                            ? 30000
+                            : 8000);
+                    const result = await this.bridge.callTool(msg.name, msg.args || {}, timeoutMs);
                     webviewView.webview.postMessage({ type: 'toolResult', id: msg.id, name: msg.name, result });
                 } catch (e: any) {
                     webviewView.webview.postMessage({ type: 'toolError', id: msg.id, name: msg.name, error: e.message });
@@ -73,6 +78,7 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
             const previewSrc = getPreviewSrc(info, useProbeProxy);
 
             this.bindConnectionStatus(webviewView.webview);
+            webviewView.webview.postMessage({ type: 'bridgeStatus', connected: true });
 
             if (this.eventUnsub) this.eventUnsub();
             this.eventUnsub = this.bridge.subscribe((event) => {

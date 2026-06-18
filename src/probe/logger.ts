@@ -1,6 +1,28 @@
 declare global {
     interface Window {
         __MCP_DEBUG__?: boolean;
+        __mcpInspector?: {
+            sendLog?: (msg: string) => void;
+        };
+    }
+}
+
+function emit(level: 'log' | 'debug' | 'info' | 'warn' | 'error', args: any[], force = false) {
+    const printer = console[level] || console.log;
+    if (force || window.__MCP_DEBUG__ === true || level === 'error' || level === 'warn') {
+        printer.apply(console, args as any);
+    }
+    try {
+        const prefix = `[Probe][${level.toUpperCase()}]`;
+        const text = [prefix].concat(args.map((a) => {
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a); } catch { return String(a); }
+        })).join(' ');
+        if (window.__mcpInspector && typeof window.__mcpInspector.sendLog === 'function') {
+            window.__mcpInspector.sendLog(text);
+        }
+    } catch {
+        // ignore
     }
 }
 
@@ -10,31 +32,22 @@ export const Logger = {
     },
 
     log(...args: any[]) {
-        if (this.isDebug) {
-            console.log(...args);
-        }
+        emit('log', args);
     },
 
     debug(...args: any[]) {
-        if (this.isDebug) {
-            console.debug(...args);
-        }
+        emit('debug', args);
     },
 
     info(...args: any[]) {
-        if (this.isDebug) {
-            console.info(...args);
-        }
+        emit('info', args);
     },
 
     warn(...args: any[]) {
-        if (this.isDebug) {
-            console.warn(...args);
-        }
+        emit('warn', args, true);
     },
 
     error(...args: any[]) {
-        // 错误日志强制输出，不被 debug 开关屏蔽
-        console.error(...args);
+        emit('error', args, true);
     }
 };
