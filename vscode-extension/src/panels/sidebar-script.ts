@@ -17,9 +17,13 @@ export function buildSidebarScript(): string {
     let requestSeq = 0;
     let perfTimer = null;
     const pendingTools = {};
+    let expandedNodes = saved.expandedNodes || {};
+    let treeSyncTimer = null;
+    let lastTreeFingerprint = '';
+    let lastExpandForUuid = '';
 
     function persistState() {
-      vscode.setState({ selectedUuid, searchQuery, activeTab });
+      vscode.setState({ selectedUuid, searchQuery, activeTab, expandedNodes });
     }
 
     function escapeHtml(s) {
@@ -35,7 +39,22 @@ export function buildSidebarScript(): string {
 
     function updateSyncHint() {
       const el = document.getElementById('sync-hint');
-      if (el) el.textContent = treeSyncHint;
+      if (el && el.textContent !== treeSyncHint) el.textContent = treeSyncHint;
+    }
+
+    function setBridgeConnected(connected) {
+      const dot = document.getElementById('conn-dot');
+      const overlay = document.getElementById('bridge-overlay');
+      if (dot) dot.classList.toggle('off', !connected);
+      if (overlay) overlay.classList.toggle('show', !connected);
+      if (!connected) {
+        stopPerfPoll();
+        treeSyncHint = 'Bridge 已断开，正在等待重连...';
+        updateSyncHint();
+      } else if (treeSyncHint.indexOf('断开') !== -1 || treeSyncHint.indexOf('重连') !== -1) {
+        treeSyncHint = '';
+        updateSyncHint();
+      }
     }
 
     function loadTree() {
@@ -97,28 +116,105 @@ export function buildSidebarScript(): string {
       return node.name || node.id || '?';
     }
 
-    function flattenTree(node, depth, rows, matchCache, queries) {
+    function normalizeDetailData(d) {
+      if (!d || typeof d !== 'object') return d;
+      const out = Object.assign({}, d);
+      if (typeof out.components === 'number' && Array.isArray(out.componentNames)) {
+        out.components = out.componentNames.map(function(name, i) {
+          return { name: name, realIndex: i, enabled: true, properties: [] };
+        });
+      } else if (Array.isArray(out.components) && out.components.length > 0 && typeof out.components[0] === 'string') {
+        out.components = out.components.map(function(name, i) {
+          return { name: name, realIndex: i, enabled: true, properties: [] };
+        });
+      }
+      return out;
+    }
+
+    function treeFingerprint(node) {
+      if (!node || typeof node !== 'object') return '';
+      const parts = [];
+      (function walk(n) {
+        if (!n || typeof n !== 'object') return;
+        parts.push((n.id || '') + ':' + (n.name || '') + ':' + (n.children ? n.children.length : 0));
+        if (Array.isArray(n.children)) n.children.forEach(walk);
+      })(node);
+      return parts.join('|');
+    }
+
+    function getCompProps(comp) {
+      return Array.isArray(comp.properties) ? comp.properties : (Array.isArray(comp.props) ? comp.props : []);
+    }
+
+    function formatPropValue(p) {
+      if (!p) return '';
+      const t = p.type || 'unsupported';
+      const v = p.value;
+      if (v === null || v === undefined) return 'null';
+      if (t === 'boolean') return v ? 'true' : 'false';
+      if (t === 'number' || t === 'string') return String(v);
+      if (t === 'Enum') return String(v);
+      if (t === 'vec2' || t === 'vec3') return JSON.stringify(v);
+      if (t === 'size' || t === 'rect' || t === 'color') return JSON.stringify(v);
+      if (t === 'node_ref' || t === 'comp_ref' || t === 'asset_ref') {
+        const name = v.name || '?';
+        const uuid = v.uuid || '';
+        const cls = v.className ? ' [' + v.className + ']' : '';
+        return name + cls + (uuid ? ' (' + uuid + ')' : '');
+      }
+      if (t === 'array') return JSON.stringify(v, null, 2);
+      if (typeof v === 'object') return JSON.stringify(v, null, 2);
+      return String(v);
+    }
+
+    function traverseTreeVisible(node, depth, isVisible, ancestorIds, queries, matchCache, rows) {
       if (!node) return;
       if (typeof node === 'string') {
-        rows.push({ label: node, depth: depth, id: '', isTruncated: true });
+        rows.push({ label: node, depth: depth, id: '', isTruncated: true, hasChildren: false, expanded: false, ancestorIds: ancestorIds });
         return;
       }
       if (typeof node !== 'object') return;
       const isSearching = queries.length > 0;
+      let matches = false;
+      let matchedComponent = '';
+      let hasMatchedDescendant = false;
       if (isSearching && node.id) {
         const state = matchCache.get(node.id);
         if (!state || (!state.isMatch && !state.hasMatchedDescendant)) return;
+        matches = state.isMatch;
+        matchedComponent = state.matchedComponent;
+        hasMatchedDescendant = state.hasMatchedDescendant;
       }
+      const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+      if (node.id && expandedNodes[node.id] === undefined) {
+        expandedNodes[node.id] = depth < 1;
+      }
+      const expanded = isSearching && hasMatchedDescendant ? true : !!expandedNodes[node.id];
       rows.push({
         label: nodeLabel(node), depth: depth, id: node.id || '',
         inactive: node.activeInHierarchy === false, isScene: !!node.isScene,
         compCount: typeof node.components === 'number' ? node.components : 0,
-        isMatch: isSearching && node.id ? (matchCache.get(node.id) || {}).isMatch : false,
-        matchedComponent: isSearching && node.id ? (matchCache.get(node.id) || {}).matchedComponent : '',
+        isMatch: isSearching && matches,
+        matchedComponent: matchedComponent,
+        hasChildren: hasChildren,
+        expanded: expanded,
+        ancestorIds: ancestorIds.slice(),
       });
-      if (Array.isArray(node.children)) {
-        node.children.forEach(function(child) { flattenTree(child, depth + 1, rows, matchCache, queries); });
+      if (hasChildren && expanded) {
+        const nextAncestors = node.id ? ancestorIds.concat(node.id) : ancestorIds;
+        node.children.forEach(function(child) {
+          let childVisible = true;
+          if (isSearching && child && child.id) {
+            const cs = matchCache.get(child.id);
+            childVisible = !!(cs && (cs.isMatch || cs.hasMatchedDescendant));
+          }
+          if (childVisible) traverseTreeVisible(child, depth + 1, true, nextAncestors, queries, matchCache, rows);
+        });
       }
+    }
+
+    function flattenTree(node, depth, rows, matchCache, queries) {
+      traverseTreeVisible(node, depth, true, [], queries, matchCache, rows);
     }
 
     function renderTree(node) {
@@ -134,14 +230,18 @@ export function buildSidebarScript(): string {
       }
       return rows.map(function(row) {
         const icon = row.isScene ? '🌐 ' : (row.isTruncated ? '… ' : '');
-        const style = 'padding-left:' + (row.depth * 12) + 'px' + (row.inactive ? ';opacity:0.45' : '');
-        const badge = row.compCount > 0 ? ' <span style="color:#888;font-size:10px">' + row.compCount + '</span>' : '';
-        const compHint = row.matchedComponent ? ' <span style="color:#888;font-size:10px">(' + escapeHtml(row.matchedComponent) + ')</span>' : '';
+        const pad = row.depth * 14;
+        const badge = row.compCount > 0 ? ' <span class="comp-badge">' + row.compCount + '</span>' : '';
+        const compHint = row.matchedComponent ? ' <span class="comp-hint">(' + escapeHtml(row.matchedComponent) + ')</span>' : '';
         const matchCls = row.isMatch ? ' match' : '';
+        const inactiveCls = row.inactive ? ' inactive' : '';
+        const caretCls = row.hasChildren ? (row.expanded ? 'tree-caret expanded' : 'tree-caret') : 'tree-caret leaf';
         if (row.id) {
-          return '<div class="node' + matchCls + '" style="' + style + '" data-uuid="' + row.id + '">' + icon + escapeHtml(row.label) + badge + compHint + '</div>';
+          return '<div class="tree-row' + matchCls + inactiveCls + '" style="padding-left:' + pad + 'px">' +
+            '<span class="' + caretCls + '" data-toggle-uuid="' + row.id + '" title="' + (row.hasChildren ? (row.expanded ? '折叠' : '展开') : '') + '">' + (row.hasChildren ? (row.expanded ? '▼' : '▶') : '·') + '</span>' +
+            '<span class="node" data-uuid="' + row.id + '">' + icon + escapeHtml(row.label) + badge + compHint + '</span></div>';
         }
-        return '<div class="node" style="' + style + ';color:#888">' + icon + escapeHtml(row.label) + '</div>';
+        return '<div class="tree-row muted" style="padding-left:' + pad + 'px"><span class="tree-caret hidden">▶</span><span class="node">' + icon + escapeHtml(row.label) + '</span></div>';
       }).join('');
     }
 
@@ -161,21 +261,31 @@ export function buildSidebarScript(): string {
     function renderTreePanel() {
       const treeEl = document.getElementById('tree');
       if (!treeData) { treeEl.textContent = '（无节点树数据）'; return; }
+      if (selectedUuid && selectedUuid !== lastExpandForUuid) {
+        expandAncestors(selectedUuid);
+        lastExpandForUuid = selectedUuid;
+      }
       treeEl.innerHTML = renderTree(treeData);
       bindTreeNodeClicks();
       if (selectedUuid) {
         const sel = treeEl.querySelector('.node[data-uuid="' + selectedUuid + '"]');
-        if (sel) sel.style.background = '#37373d';
+        if (sel) {
+          const row = sel.closest('.tree-row');
+          if (row) row.classList.add('selected');
+        }
       }
     }
 
-    function propInputHtml(compName, compIndex, p) {
-      if (!p || !p.key || detailData && detailData._fromCache) return '';
+    function propInputHtml(compName, compIndex, p, readOnly) {
+      if (!p || !p.key) return '';
       const t = p.type || 'unsupported';
-      if (t !== 'number' && t !== 'string' && t !== 'boolean') {
-        let val = p.value;
-        if (val !== null && typeof val === 'object') val = JSON.stringify(val);
-        return '<div class="detail-kv"><span class="k">' + escapeHtml(p.key) + '</span><span>' + escapeHtml(String(val)) + '</span></div>';
+      if (readOnly || t !== 'number' && t !== 'string' && t !== 'boolean') {
+        const formatted = formatPropValue(p);
+        const multiline = formatted.indexOf('\\n') !== -1 || formatted.length > 60;
+        if (multiline) {
+          return '<div class="detail-kv multiline"><span class="k">' + escapeHtml(p.key) + '</span><pre class="prop-val-pre">' + escapeHtml(formatted) + '</pre></div>';
+        }
+        return '<div class="detail-kv"><span class="k">' + escapeHtml(p.key) + '</span><span class="prop-val">' + escapeHtml(formatted) + '</span></div>';
       }
       const ds = ' data-comp-name="' + escapeHtml(compName || '') + '" data-comp-index="' + compIndex + '" data-prop-key="' + escapeHtml(p.key) + '" data-prop-type="' + t + '"';
       if (t === 'boolean') {
@@ -190,7 +300,7 @@ export function buildSidebarScript(): string {
 
     function bindDetailEditors() {
       document.querySelectorAll('#detail .prop-input').forEach(function(input) {
-        input.onchange = function() {
+        function commitChange() {
           if (!selectedUuid || detailData && detailData._fromCache) return;
           const compName = input.dataset.compName || null;
           const compIndex = parseInt(input.dataset.compIndex || '-1', 10);
@@ -205,8 +315,29 @@ export function buildSidebarScript(): string {
             value: value,
             compIndex: compIndex,
           });
-        };
+        }
+        input.onchange = commitChange;
+        if (input.type === 'text' || input.type === 'number') {
+          input.onblur = commitChange;
+          input.onkeydown = function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+          };
+        }
       });
+    }
+
+    function showPropFeedback(msg, isErr) {
+      let el = document.getElementById('prop-feedback');
+      if (!el) {
+        const detail = document.getElementById('detail');
+        if (!detail) return;
+        el = document.createElement('div');
+        el.id = 'prop-feedback';
+        el.style.cssText = 'font-size:11px;padding:4px 0;min-height:16px';
+        detail.insertBefore(el, detail.firstChild);
+      }
+      el.style.color = isErr ? '#f48771' : '#4ec9b0';
+      el.textContent = msg;
     }
 
     function renderDetailPanel() {
@@ -215,7 +346,8 @@ export function buildSidebarScript(): string {
         el.innerHTML = '<div class="detail-placeholder">' + escapeHtml(detailText) + '</div>';
         return;
       }
-      const d = detailData;
+      const d = normalizeDetailData(detailData);
+      const readOnly = !!d._fromCache;
       let html = '';
       if (d._fromCache) {
         html += '<div class="detail-section" style="color:#dcdcaa;font-size:11px">' + escapeHtml(d._hint || '来自节点树缓存（只读）') + '</div>';
@@ -235,9 +367,14 @@ export function buildSidebarScript(): string {
         html += '<div class="detail-section"><h4>组件 (' + d.components.length + ')</h4>';
         d.components.forEach(function(comp, idx) {
           const cname = comp.name || comp.type || ('Component' + idx);
-          html += '<details class="comp"' + (idx < 2 ? ' open' : '') + '><summary>' + escapeHtml(cname) + '</summary>';
-          if (Array.isArray(comp.props)) {
-            comp.props.forEach(function(p) { html += propInputHtml(cname, idx, p); });
+          const props = getCompProps(comp);
+          const enabledTag = comp.enabled === false ? ' <span class="comp-disabled">(disabled)</span>' : '';
+          const propCount = props.length > 0 ? ' <span class="comp-count">' + props.length + '</span>' : '';
+          html += '<details class="comp"' + (idx < 2 ? ' open' : '') + '><summary>' + escapeHtml(cname) + enabledTag + propCount + '</summary>';
+          if (props.length === 0) {
+            html += '<div class="detail-placeholder" style="padding:4px 0">' + (readOnly ? '缓存中无属性，请确认 Creator 预览运行中' : '无公开属性') + '</div>';
+          } else {
+            props.forEach(function(p) { html += propInputHtml(cname, comp.realIndex != null ? comp.realIndex : idx, p, readOnly); });
           }
           html += '</details>';
         });
@@ -309,9 +446,24 @@ export function buildSidebarScript(): string {
     }
 
     function bindTreeNodeClicks() {
+      document.querySelectorAll('.tree-caret[data-toggle-uuid]').forEach(function(el) {
+        el.onclick = function(e) {
+          e.stopPropagation();
+          const id = el.dataset.toggleUuid;
+          if (!id) return;
+          expandedNodes[id] = !expandedNodes[id];
+          persistState();
+          renderTreePanel();
+        };
+      });
       document.querySelectorAll('.node[data-uuid]').forEach(function(el) {
         el.onclick = function() {
           selectedUuid = el.dataset.uuid;
+          const row = el.closest('.tree-row');
+          if (row) {
+            document.querySelectorAll('.tree-row.selected').forEach(function(r) { r.classList.remove('selected'); });
+            row.classList.add('selected');
+          }
           persistState();
           detailData = null;
           detailText = '加载属性中...';
@@ -322,13 +474,45 @@ export function buildSidebarScript(): string {
       });
     }
 
+    function expandAncestors(uuid) {
+      if (!treeData || !uuid) return;
+      const path = [];
+      function findPath(node, target) {
+        if (!node || typeof node !== 'object') return false;
+        if (node.id === target) return true;
+        if (Array.isArray(node.children)) {
+          for (let i = 0; i < node.children.length; i++) {
+            if (findPath(node.children[i], target)) {
+              if (node.id) path.unshift(node.id);
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      findPath(treeData, uuid);
+      path.forEach(function(id) { expandedNodes[id] = true; });
+    }
+
     function applyTreeData(tree, source) {
       const root = unwrapTree(tree);
       if (!root || typeof root !== 'object') return;
+      const fp = treeFingerprint(root);
+      const unchanged = fp && fp === lastTreeFingerprint;
+      if (unchanged && source === 'probe') return;
       treeData = root;
+      lastTreeFingerprint = fp;
       treeSyncHint = source === 'probe' ? '探针自动同步' : (source === 'manual' ? '已手动刷新' : treeSyncHint);
       updateSyncHint();
       if (activeTab === 'tree') renderTreePanel();
+    }
+
+    function scheduleProbeTreeSync(tree) {
+      if (treeSyncTimer) clearTimeout(treeSyncTimer);
+      treeSyncTimer = setTimeout(function() {
+        treeSyncTimer = null;
+        applyTreeData(tree, 'probe');
+      }, 400);
     }
 
     function parseToolJson(text) {
@@ -354,7 +538,7 @@ export function buildSidebarScript(): string {
 
     function handleDetailText(text) {
       try {
-        detailData = parseToolJson(text);
+        detailData = normalizeDetailData(parseToolJson(text));
         detailText = JSON.stringify(detailData, null, 2);
       } catch (e) {
         detailData = null;
@@ -378,9 +562,13 @@ export function buildSidebarScript(): string {
     function handleUpdatePropText(text) {
       try {
         const data = parseToolJson(text);
-        if (data && data.success) reloadDetail();
-        else renderEnginePanel('属性更新失败');
-      } catch (e) { renderEnginePanel('属性更新: ' + e.message); }
+        if (data && data.success) {
+          showPropFeedback('已写入 Creator 预览运行时', false);
+          reloadDetail();
+        } else {
+          showPropFeedback('属性更新失败', true);
+        }
+      } catch (e) { showPropFeedback('属性更新: ' + e.message, true); }
     }
 
     function handleEngineText(text) {
@@ -418,12 +606,15 @@ export function buildSidebarScript(): string {
         else if (toolName === 'get_runtime_stats') document.getElementById('perf-content').textContent = err;
         else if (toolName === 'get_memory_ranking') document.getElementById('memory-content').textContent = err;
         else if (toolName === 'list_scripts') document.getElementById('scripts-content').textContent = err;
+        else if (toolName === 'update_node_property') showPropFeedback(msg.error, true);
         else renderEnginePanel(err);
+      } else if (msg.type === 'bridgeStatus') {
+        setBridgeConnected(!!msg.connected);
       } else if (msg.type === 'bridgeEvent' && msg.event) {
         if (msg.event.type === 'probe:event' && msg.event.channel === 'update-tree') {
           try {
             const payload = typeof msg.event.args[0] === 'string' ? JSON.parse(msg.event.args[0]) : msg.event.args[0];
-            if (payload && payload.tree && isLikelyFullTree(unwrapTree(payload.tree))) applyTreeData(payload.tree, 'probe');
+            if (payload && payload.tree && isLikelyFullTree(unwrapTree(payload.tree))) scheduleProbeTreeSync(payload.tree);
           } catch(_) {}
         } else if (msg.event.type === 'probe:event' && msg.event.channel === 'render-debugger-payload') {
           try {

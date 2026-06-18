@@ -14,7 +14,7 @@ export function getPreviewSrc(info: { previewUrl: string; probeProxyUrl?: string
     return useProbeProxy && info.probeProxyUrl ? info.probeProxyUrl : info.previewUrl;
 }
 
-/** 编辑器区域预览始终直连 Creator 预览端口，不走探针代理（代理会破坏 WebGL 渲染） */
+/** 编辑器区预览始终直连 Creator 预览端口（不走探针代理，避免 WebGL/资源加载问题） */
 export function getEditorPreviewSrc(info: { previewUrl: string }): string {
     return info.previewUrl;
 }
@@ -219,6 +219,24 @@ function openPreviewWithWebviewPanel(
     });
 }
 
+async function closeStaleProxyPreviewTabs(bridgePort: number, projectName: string): Promise<void> {
+    const proxyPort = bridgePort + PROXY_PORT_OFFSET;
+    const proxyHint = `:${proxyPort}`;
+    for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+            const label = tab.label || '';
+            if (label.includes(proxyHint) || label.includes(`127.0.0.1:${proxyPort}`)) {
+                try {
+                    await vscode.window.tabGroups.close(tab);
+                } catch { /* ignore */ }
+            }
+        }
+    }
+    if (lastOpenedPreviewSrc && lastOpenedPreviewSrc.includes(proxyHint)) {
+        lastOpenedPreviewSrc = undefined;
+    }
+}
+
 async function openPreviewInEditorOnce(
     bridge: BridgeClient,
     extensionUri: vscode.Uri,
@@ -236,6 +254,8 @@ async function openPreviewInEditorOnce(
     if (!previewSrc) {
         throw new Error('预览地址为空，请确认 Creator 已点击「预览运行」');
     }
+
+    await closeStaleProxyPreviewTabs(info.bridgePort, info.projectName);
 
     if (mode === 'simpleBrowser') {
         const existing = findExistingPreviewTab(previewSrc, info.projectName, 'simpleBrowser');

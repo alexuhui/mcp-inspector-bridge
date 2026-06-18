@@ -22,7 +22,19 @@ function rebuildInjectCache(bridgePort: number): string {
 }
 
 function injectProbeIntoHtml(html: string): string {
-    const tag = `<script src="${INJECT_PATH}" defer></script>`;
+    // 游戏主循环启动后再异步注入 slim 探针，避免同步脚本阻断 WebGL 初始化
+    const tag = `<script>(function(){
+  function loadProbe(){
+    window.__MCP_SLIM_MODE__=true;
+    var s=document.createElement('script');
+    s.src='${INJECT_PATH}';
+    s.async=true;
+    (document.head||document.documentElement).appendChild(s);
+  }
+  function schedule(){ setTimeout(loadProbe,1800); }
+  if(document.readyState==='complete') schedule();
+  else window.addEventListener('load',schedule);
+})();</script>`;
     if (/<\/body>/i.test(html)) {
         return html.replace(/<\/body>/i, `${tag}</body>`);
     }
@@ -63,9 +75,15 @@ function forwardToPreview(
         },
         (proxyRes) => {
             const contentType = String(proxyRes.headers['content-type'] || '');
-            const isHtml = req.method === 'GET' && contentType.includes('text/html');
+            const pathOnly = (pathWithQuery.split('?')[0] || '/');
+            const statusOk = (proxyRes.statusCode || 0) >= 200 && (proxyRes.statusCode || 0) < 300;
+            // 仅对主文档注入探针，避免把 404 HTML 误注入到 settings.js 等脚本响应
+            const isMainHtml = req.method === 'GET'
+                && statusOk
+                && contentType.includes('text/html')
+                && (pathOnly === '/' || pathOnly.endsWith('/index.html'));
 
-            if (!isHtml) {
+            if (!isMainHtml) {
                 res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
                 proxyRes.pipe(res);
                 return;

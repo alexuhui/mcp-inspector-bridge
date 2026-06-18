@@ -44,6 +44,23 @@
 
 ---
 
+## [Unreleased] - VS Code 扩展 Phase 4
+
+### ✨ 新特性（0.1.9）
+
+- **断线重连 UI**：Subscribe 断开时侧栏遮罩引导；头部连接状态点；「选择实例」后自动刷新
+- **文档**：`specs/vscode-extension/e2e-checklist.md` 验收清单、`known-limitations.md` 已知限制
+
+### 🐛 缺陷修复
+
+- **`control_engine` WS 路由**：`ipc-router` 允许 `canRelayTool` 工具通过，修复引擎标签 JSON 解析错误
+
+### 📦 扩展版本
+
+- `cocos-mcp-inspector` **0.1.9**
+
+---
+
 ## [Unreleased] - VS Code 扩展 Phase 3
 
 ### ✨ 新特性（0.1.8 — 阶段 C）

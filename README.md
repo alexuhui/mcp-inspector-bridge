@@ -84,6 +84,10 @@ package-vsix-win.bat
 
 命令面板：`Cocos Inspector: 选择 Bridge 实例` / `在编辑器打开预览` / `打开预览页 / DevTools`
 
+**已知限制**（扩展 vs Creator 面板）：DevTools 无法内嵌、复杂属性只读、无屏幕拾取/Widget 编辑、资源定位降级等 — 详见 [specs/vscode-extension/known-limitations.md](./specs/vscode-extension/known-limitations.md)。
+
+**验收清单**：发版前可按 [specs/vscode-extension/e2e-checklist.md](./specs/vscode-extension/e2e-checklist.md) 逐项勾选。
+
 ---
 
 ## ✨ 核心特性

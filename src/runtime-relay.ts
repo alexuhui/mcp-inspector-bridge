@@ -5,7 +5,7 @@
 declare const Editor: any;
 
 import { RELAY_RUNTIME_TOOLS } from './shared/protocol';
-import { executeProbeRpc } from './probe-rpc';
+import { executeProbeRpc, executeProbeRpcBroadcast } from './probe-rpc';
 
 let _nodeTreeCache: any = null;
 let _handshakeInfo: any = null;
@@ -85,8 +85,6 @@ function getPanelWebContentsFromIpc(): Promise<any | null> {
 }
 
 export async function resolvePreviewWebContents(): Promise<any | null> {
-    const fromPanel = await getPanelWebContentsFromIpc();
-    if (fromPanel && !fromPanel.isDestroyed?.()) return fromPanel;
     const withScene = await findPreviewWebContentsWithScene();
     if (withScene) return withScene;
     return findPreviewWebContents();
@@ -131,11 +129,41 @@ export async function executeInPreview(code: string, timeoutMs = 4000): Promise<
 export async function executeRuntimeJs(code: string, timeoutMs = 4000): Promise<any> {
     try {
         const r = await executeInPreview(code, timeoutMs);
-        return typeof r === 'string' ? JSON.parse(r) : r;
+        const parsed = typeof r === 'string' ? JSON.parse(r) : r;
+        if (parsed && parsed.error) throw new Error(parsed.msg || parsed.error);
+        return parsed;
     } catch {
         const r = await executeProbeRpc(code, timeoutMs);
-        return typeof r === 'string' ? JSON.parse(r) : r;
+        const parsed = typeof r === 'string' ? JSON.parse(r) : r;
+        if (parsed && parsed.error) throw new Error(parsed.msg || parsed.error);
+        return parsed;
     }
+}
+
+/** 预览 WebContents + 全部探针页双写（覆盖编辑器区预览与 Creator 内预览） */
+export async function executeRuntimeJsBroadcast(code: string, timeoutMs = 4000): Promise<any> {
+    const parsedResults: any[] = [];
+
+    try {
+        const r = await executeInPreview(code, timeoutMs);
+        parsedResults.push(typeof r === 'string' ? JSON.parse(r) : r);
+    } catch { /* preview WC 不可用 */ }
+
+    try {
+        const r = await executeProbeRpcBroadcast(code, timeoutMs);
+        parsedResults.push(typeof r === 'string' ? JSON.parse(r) : r);
+    } catch { /* 无探针 */ }
+
+    const success = parsedResults.find((r) => r && r.success === true);
+    if (success) return success;
+
+    const withData = parsedResults.find((r) => r && !r.error);
+    if (withData) return withData;
+
+    const err = parsedResults.find((r) => r && r.error);
+    if (err) throw new Error(err.msg || err.error);
+
+    throw new Error('未找到可写入的游戏运行时（请确认预览已运行）');
 }
 
 export function setNodeTreeCache(tree: any): void {
@@ -221,27 +249,37 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                 })();
             `;
             try {
-                const r = await executeInPreview(code);
-                return typeof r === 'string' ? JSON.parse(r) : r;
-            } catch {
-                try {
-                    const r = await executeProbeRpc(code);
-                    const parsed = typeof r === 'string' ? JSON.parse(r) : r;
-                    if (parsed && parsed.error) {
-                        throw new Error(parsed.msg || parsed.error);
-                    }
-                    return parsed;
-                } catch (e: any) {
-                    const cached = findNodeInTree(unwrapTreeNode(_nodeTreeCache), args.uuid);
-                    if (cached) {
-                        return {
-                            ...cached,
-                            _fromCache: true,
-                            _hint: '节点树缓存中的摘要信息；完整属性需 Creator 内预览或探针实时连接',
-                        };
-                    }
-                    throw e;
+                const parsed = await executeRuntimeJs(code, 6000);
+                if (parsed && parsed.error) {
+                    throw new Error(parsed.msg || parsed.error);
                 }
+                return parsed;
+            } catch (e: any) {
+                const cached = findNodeInTree(unwrapTreeNode(_nodeTreeCache), args.uuid);
+                if (cached) {
+                    const names: string[] = Array.isArray(cached.componentNames)
+                        ? cached.componentNames
+                        : (Array.isArray(cached.components) && typeof cached.components[0] === 'string' ? cached.components : []);
+                    return {
+                        id: cached.id,
+                        name: cached.name,
+                        active: cached.active,
+                        activeInHierarchy: cached.activeInHierarchy,
+                        x: cached.x ?? 0,
+                        y: cached.y ?? 0,
+                        width: cached.width,
+                        height: cached.height,
+                        components: names.map((name: string, i: number) => ({
+                            name,
+                            realIndex: i,
+                            enabled: true,
+                            properties: [],
+                        })),
+                        _fromCache: true,
+                        _hint: '仅缓存摘要（无组件属性）。请确认 Creator 内预览正在运行且探针已连接。',
+                    };
+                }
+                throw e;
             }
         }
         case 'update_node_property': {
@@ -260,8 +298,14 @@ export async function handleRelayTool(name: string, args: any = {}): Promise<any
                     } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
                 })();
             `;
-            const r = await executeInPreview(code);
-            return typeof r === 'string' ? JSON.parse(r) : r;
+            const parsed = await executeRuntimeJsBroadcast(code, 6000);
+            if (parsed && parsed.error) {
+                throw new Error(parsed.msg || parsed.error);
+            }
+            if (!parsed || parsed.success !== true) {
+                throw new Error('属性更新失败（组件或属性不存在）');
+            }
+            return parsed;
         }
         case 'get_memory_ranking': {
             const code = `

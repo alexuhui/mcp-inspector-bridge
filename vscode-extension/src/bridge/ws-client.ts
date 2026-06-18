@@ -25,10 +25,26 @@ export interface PreviewInfo {
 export class BridgeClient {
     private port: number | null = null;
     private subscribers: Array<(msg: any) => void> = [];
+    private connectionListeners: Array<(connected: boolean) => void> = [];
     private ws: WebSocket | null = null;
+    private subscribeConnected = false;
 
     get activePort(): number | null {
         return this.port;
+    }
+
+    onConnectionChange(listener: (connected: boolean) => void): () => void {
+        this.connectionListeners.push(listener);
+        listener(this.subscribeConnected);
+        return () => {
+            this.connectionListeners = this.connectionListeners.filter((fn) => fn !== listener);
+        };
+    }
+
+    private emitConnection(connected: boolean): void {
+        if (this.subscribeConnected === connected) return;
+        this.subscribeConnected = connected;
+        for (const fn of this.connectionListeners) fn(connected);
     }
 
     async scanInstances(): Promise<BridgeInstance[]> {
@@ -190,6 +206,7 @@ export class BridgeClient {
             }
             this.ws = new WebSocket(`ws://127.0.0.1:${port}`);
             this.ws.on('open', () => {
+                this.emitConnection(true);
                 this.ws?.send(JSON.stringify({ method: 'subscribe' }));
             });
             this.ws.on('message', (data) => {
@@ -198,7 +215,13 @@ export class BridgeClient {
                     for (const fn of this.subscribers) fn(msg);
                 } catch (_) { /* ignore */ }
             });
-            this.ws.on('close', () => setTimeout(connect, 2000));
+            this.ws.on('close', () => {
+                this.emitConnection(false);
+                setTimeout(connect, 2000);
+            });
+            this.ws.on('error', () => {
+                this.emitConnection(false);
+            });
         };
 
         if (port) connect();

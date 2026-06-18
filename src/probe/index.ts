@@ -14,6 +14,29 @@ import { initPicker } from './picker';
         return;
     }
 
+    // 编辑器区 HTTP 代理预览：仅挂载 crawler + WS，跳过渲染钩子（避免 WebGL 黑屏）
+    if (window.__MCP_SLIM_MODE__) {
+        initCrawler();
+        function slimReady() {
+            try {
+                if (typeof cc === 'undefined' || !cc.director || !cc.director.getScene()) {
+                    setTimeout(slimReady, 500);
+                    return;
+                }
+                window.__mcpSyncNodeTree = syncNodeTree;
+                window.__mcpProbeInitialized = true;
+            } catch (e) {
+                console.error('[Probe] slim init failed:', e);
+            }
+        }
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            slimReady();
+        } else {
+            window.addEventListener('DOMContentLoaded', slimReady);
+        }
+        return;
+    }
+
     // 初始化全局模块暴露区
     // initConsoleHijacker(); // 已废弃：日志由主进程 CDP listener 接管
     initCrawler();

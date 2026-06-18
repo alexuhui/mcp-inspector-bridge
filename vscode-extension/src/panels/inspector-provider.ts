@@ -6,6 +6,9 @@ import { buildSidebarScript } from './sidebar-script';
 export class InspectorPanelProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cocosInspector.panel';
 
+    private connectionUnsub: (() => void) | null = null;
+    private eventUnsub: (() => void) | null = null;
+
     constructor(
         private readonly extensionUri: vscode.Uri,
         private readonly bridge: BridgeClient,
@@ -47,6 +50,10 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
                 }
             } else if (msg.type === 'refresh') {
                 void this.refresh(webviewView, { ensurePreview: false });
+            } else if (msg.type === 'pickInstance') {
+                void vscode.commands.executeCommand('cocosInspector.pickInstance').then(() => {
+                    void this.refresh(webviewView, { ensurePreview: false });
+                });
             } else if (msg.type === 'openPreviewInEditor') {
                 openPreviewInEditor(this.bridge, this.extensionUri, { forceReload: true }).catch((e: Error) => {
                     vscode.window.showErrorMessage(e.message);
@@ -65,7 +72,10 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
             const previewInEditor = config.get<boolean>('previewInEditor') !== false;
             const previewSrc = getPreviewSrc(info, useProbeProxy);
 
-            this.bridge.subscribe((event) => {
+            this.bindConnectionStatus(webviewView.webview);
+
+            if (this.eventUnsub) this.eventUnsub();
+            this.eventUnsub = this.bridge.subscribe((event) => {
                 webviewView.webview.postMessage({ type: 'bridgeEvent', event });
             });
 
@@ -81,6 +91,16 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
         } catch (e: any) {
             webviewView.webview.html = this.getErrorHtml(e.message);
         }
+    }
+
+    private bindConnectionStatus(webview: vscode.Webview): void {
+        if (this.connectionUnsub) {
+            this.connectionUnsub();
+            this.connectionUnsub = null;
+        }
+        this.connectionUnsub = this.bridge.onConnectionChange((connected) => {
+            webview.postMessage({ type: 'bridgeStatus', connected });
+        });
     }
 
     private getLoadingHtml(): string {
@@ -100,10 +120,12 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   <p>请确认：</p>
   <ol>
     <li>Cocos Creator 已打开项目</li>
-    <li>mcp-inspector-bridge 插件已加载</li>
+    <li>mcp-inspector-bridge 插件已加载（可重新加载插件）</li>
     <li>已点击「预览运行」</li>
+    <li>多开实例时，在状态栏选择正确的 Bridge 端口</li>
   </ol>
   <button onclick="vscode.postMessage({type:'refresh'})">重试连接</button>
+  <button onclick="vscode.postMessage({type:'pickInstance'})">选择实例</button>
   <script>const vscode = acquireVsCodeApi();</script>
 </body></html>`;
     }
@@ -146,6 +168,20 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   pre { font-size: 11px; white-space: pre-wrap; word-break: break-all; }
   button { padding: 4px 10px; background: #0e639c; color: #fff; border: none; cursor: pointer; border-radius: 2px; }
   #tree { font-family: monospace; font-size: 12px; }
+  .tree-row { display: flex; align-items: center; gap: 2px; padding: 1px 4px 1px 0; border-radius: 2px; }
+  .tree-row:hover { background: #2a2d2e; }
+  .tree-row.selected { background: #37373d; }
+  .tree-row.inactive { opacity: 0.45; }
+  .tree-row.muted { color: #888; }
+  .tree-caret { cursor: pointer; width: 16px; flex-shrink: 0; font-size: 10px; color: #bbb; display: inline-block; user-select: none; text-align: center; }
+  .tree-caret.expanded { color: #9cdcfe; }
+  .tree-caret.leaf { color: #555; cursor: default; }
+  .tree-row .node { flex: 1; min-width: 0; cursor: pointer; padding: 1px 0; }
+  .comp-badge, .comp-hint, .comp-count { color: #888; font-size: 10px; }
+  .comp-disabled { color: #f48771; font-size: 10px; }
+  .prop-val { word-break: break-all; font-size: 11px; }
+  .prop-val-pre { font-size: 10px; white-space: pre-wrap; word-break: break-all; color: #aaa; margin: 2px 0 4px 72px; }
+  .detail-kv.multiline { display: block; }
   .node { padding: 2px 4px; cursor: pointer; border-radius: 2px; }
   .node:hover { background: #37373d; }
   .node.match { color: #4ec9b0; }
@@ -173,11 +209,30 @@ export class InspectorPanelProvider implements vscode.WebviewViewProvider {
   .engine-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .hint { font-size: 10px; color: #888; margin-top: 8px; }
   #engine-msg { font-size: 11px; color: #dcdcaa; min-height: 16px; }
+  .bridge-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.72); z-index: 100; align-items: center; justify-content: center; padding: 16px; }
+  .bridge-overlay.show { display: flex; }
+  .bridge-overlay .card { background: #252526; border: 1px solid #3c3c3c; border-radius: 6px; padding: 16px; max-width: 280px; }
+  .bridge-overlay h4 { color: #f48771; margin-bottom: 8px; font-size: 13px; }
+  .bridge-overlay p { font-size: 12px; color: #aaa; margin-bottom: 8px; line-height: 1.5; }
+  .bridge-overlay .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  header .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ec9b0; display: inline-block; }
+  header .conn-dot.off { background: #f48771; }
 </style>
 </head>
 <body>
+  <div id="bridge-overlay" class="bridge-overlay">
+    <div class="card">
+      <h4>Bridge 连接已断开</h4>
+      <p>Creator 关闭、插件重载或端口变更会导致断开。请确认预览仍在运行后重连。</p>
+      <div class="actions">
+        <button onclick="vscode.postMessage({type:'refresh'})">重连</button>
+        <button onclick="vscode.postMessage({type:'pickInstance'})">选择实例</button>
+      </div>
+    </div>
+  </div>
   <header>
-    <span class="status">● ${info.projectName}</span>
+    <span class="conn-dot" id="conn-dot" title="Bridge 连接状态"></span>
+    <span class="status">${info.projectName}</span>
     <span>Bridge :${info.bridgePort}</span>
     ${modeHint}
     <span id="sync-hint" class="sync-hint"></span>
