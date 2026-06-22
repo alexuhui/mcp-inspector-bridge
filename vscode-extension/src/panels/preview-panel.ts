@@ -4,7 +4,7 @@ import { BridgeClient, PreviewInfo } from '../bridge/ws-client';
 const PROXY_PORT_OFFSET = 1000;
 const PREVIEW_PANEL_VIEW_TYPE = 'cocosInspector.preview';
 /** iframe 内固定使用此端口，通过 portMapping 映射到真实预览端口 */
-const WEBVIEW_PREVIEW_PORT = 17456;
+export const WEBVIEW_PREVIEW_PORT = 17456;
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let previewOpenTask: Promise<void> | undefined;
@@ -83,7 +83,7 @@ async function focusExistingPreviewTab(tab: vscode.Tab): Promise<void> {
     }
 }
 
-function getHostPort(rawUrl: string): { host: string; port: number } | null {
+export function getHostPort(rawUrl: string): { host: string; port: number } | null {
     try {
         const u = new URL(rawUrl);
         const port = u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80);
@@ -94,7 +94,7 @@ function getHostPort(rawUrl: string): { host: string; port: number } | null {
     }
 }
 
-function buildPortMappings(info: PreviewInfo, target: { host: string; port: number } | null): vscode.WebviewPortMapping[] {
+export function buildPortMappings(info: PreviewInfo, target: { host: string; port: number } | null): vscode.WebviewPortMapping[] {
     const mappings: vscode.WebviewPortMapping[] = [
         { webviewPort: WEBVIEW_PREVIEW_PORT, extensionHostPort: info.previewPort || WEBVIEW_PREVIEW_PORT },
     ];
@@ -108,11 +108,27 @@ function buildPortMappings(info: PreviewInfo, target: { host: string; port: numb
     return mappings;
 }
 
-function getWebviewFrameUrl(target: { host: string; port: number } | null, info: PreviewInfo): string {
+export function getWebviewFrameUrl(target: { host: string; port: number } | null, info: PreviewInfo): string {
     if (target && target.port !== info.previewPort) {
         return `http://127.0.0.1:${target.port}/`;
     }
     return `http://127.0.0.1:${WEBVIEW_PREVIEW_PORT}/`;
+}
+
+export function configurePreviewWebview(
+    webview: vscode.Webview,
+    extensionUri: vscode.Uri,
+    info: PreviewInfo,
+    previewSrc: string,
+): string {
+    const target = getHostPort(previewSrc);
+    const frameUrl = getWebviewFrameUrl(target, info);
+    webview.options = {
+        enableScripts: true,
+        localResourceRoots: [extensionUri],
+        portMapping: buildPortMappings(info, target),
+    };
+    return frameUrl;
 }
 
 export function getPreviewOnlyHtml(frameUrl: string, title: string): string {
