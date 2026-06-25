@@ -1,5 +1,25 @@
 // 场景内真正负责修改编辑器状态的脚本
+declare const Editor: any;
+
+/** 探测场景/预制体编辑模式是否已激活（用于插件启动时补偿错过的 scene:ready） */
+function probeEditModeActive(): boolean {
+    try {
+        const editMode = Editor.require('scene://edit-mode');
+        if (!editMode || typeof editMode.curMode !== 'function') return false;
+        const mode = editMode.curMode();
+        if (!mode || !mode.name) return false;
+        return mode.name === 'scene' || mode.name === 'prefab';
+    } catch (e) {
+        return false;
+    }
+}
+
 module.exports = {
+    /** 主进程启动探测：返回当前是否处于场景或预制体编辑态 */
+    'check-scene-active': function (event: any) {
+        const active = probeEditModeActive();
+        if (event.reply) event.reply(null, { active });
+    },
     'set-property': function (event: any, args: { uuid: string, compName: string | null, compIndex?: number, propKey: string, value: any }) {
         const eng = (window as any).cc;
         if (!eng || !eng.engine) {

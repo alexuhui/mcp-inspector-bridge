@@ -6,6 +6,58 @@ import { startProbeInjector, stopProbeInjector } from './probe-injector';
 declare const Editor: any;
 
 let _isSceneActive = false;
+let _sceneProbeTimer: any = null;
+
+/** 通过 scene-script 探测编辑器是否已处于场景/预制体编辑态 */
+function probeSceneActive(cb: (active: boolean) => void): void {
+    try {
+        Editor.Scene.callSceneScript('mcp-inspector-bridge', 'check-scene-active', {}, (err: any, result: any) => {
+            cb(!err && !!result && result.active === true);
+        });
+    } catch (e) {
+        cb(false);
+    }
+}
+
+/** 同步场景激活状态并通知面板 */
+function syncSceneActiveState(active: boolean): void {
+    if (_isSceneActive === active) return;
+    _isSceneActive = active;
+    Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active });
+}
+
+/** 启动后轮询补偿：项目恢复上次场景时 scene:ready 可能早于插件 load */
+function startSceneActiveProbe(): void {
+    if (_sceneProbeTimer) {
+        clearInterval(_sceneProbeTimer);
+        _sceneProbeTimer = null;
+    }
+    let attempts = 0;
+    const tryProbe = () => {
+        if (_isSceneActive) {
+            if (_sceneProbeTimer) clearInterval(_sceneProbeTimer);
+            _sceneProbeTimer = null;
+            return;
+        }
+        probeSceneActive((active) => {
+            if (active) {
+                syncSceneActiveState(true);
+                if (_sceneProbeTimer) clearInterval(_sceneProbeTimer);
+                _sceneProbeTimer = null;
+            }
+        });
+    };
+    tryProbe();
+    _sceneProbeTimer = setInterval(() => {
+        attempts++;
+        if (_isSceneActive || attempts >= 30) {
+            clearInterval(_sceneProbeTimer);
+            _sceneProbeTimer = null;
+            return;
+        }
+        tryProbe();
+    }, 1000);
+}
 
 /**
  * 跨平台路径 Basename 提取工具（不依赖 Node.js path 模块）
@@ -75,9 +127,14 @@ module.exports = {
         } else {
             Editor.log('[MCP] Headless 模式已启用，bridge 在后台运行，可使用 Cursor/VS Code 扩展连接');
         }
+        startSceneActiveProbe();
     },
 
     unload() {
+        if (_sceneProbeTimer) {
+            clearInterval(_sceneProbeTimer);
+            _sceneProbeTimer = null;
+        }
         stopProbeInjector();
         if (_wss) {
             _wss.close();
@@ -92,16 +149,13 @@ module.exports = {
     // 注册跨进程 IPC 消息侦听器
     messages: {
         'scene:ready'() {
-            _isSceneActive = true;
-            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: true });
+            syncSceneActiveState(true);
         },
         'scene:reloading'() {
-            _isSceneActive = false;
-            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false });
+            syncSceneActiveState(false);
         },
         'scene:closed'() {
-            _isSceneActive = false;
-            Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'scene-status-changed', { active: false });
+            syncSceneActiveState(false);
         },
         'open'() {
             if (isHeadlessMode()) {
@@ -112,11 +166,15 @@ module.exports = {
             Editor.Panel.open('mcp-inspector-bridge');
         },
         'query-scene-active'(event: any) {
-            if (event.reply) {
-                // 也可通过向 scene 面板发信检查双保险
-                const active = _isSceneActive !== false;
-                event.reply(null, active);
+            if (!event.reply) return;
+            if (_isSceneActive) {
+                event.reply(null, true);
+                return;
             }
+            probeSceneActive((active) => {
+                if (active) syncSceneActiveState(true);
+                event.reply(null, active);
+            });
         },
         'query-mcp-status'(event: any) {
             if (event.reply) {
