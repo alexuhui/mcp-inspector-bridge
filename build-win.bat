@@ -1,25 +1,43 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
 cd /d "%~dp0"
 
-set "VS_NODE=C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VisualStudio\NodeJs\node.exe"
-set "NPM_CLI=E:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js"
-
-if exist "%VS_NODE%" (
-  set "NODE_BIN=%VS_NODE%"
+REM Prefer Node.js 24 install directly (not dependent on PATH order).
+set "NODE_HOME=E:\NodeJS\node-v24.17.0-win-x64"
+if exist "%NODE_HOME%\node.exe" (
+  set "PATH=%NODE_HOME%;%PATH%"
+  set "NODE_BIN=%NODE_HOME%\node.exe"
 ) else (
   set "NODE_BIN=node"
+  for /f "delims=" %%I in ('where node 2^>nul') do (
+    set "NODE_HOME=%%~dpI"
+    goto :after_where_node
+  )
+)
+:after_where_node
+
+REM Prefer npm next to selected Node; skip incomplete installs (e.g. missing semver).
+set "NPM_CLI="
+if defined NODE_HOME if exist "%NODE_HOME%\node_modules\npm\bin\npm-cli.js" (
+  if exist "%NODE_HOME%\node_modules\npm\node_modules\semver" (
+    set "NPM_CLI=%NODE_HOME%\node_modules\npm\bin\npm-cli.js"
+  )
+)
+if not defined NPM_CLI if exist "E:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" (
+  set "NPM_CLI=E:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js"
 )
 
 echo [build-win] Working dir: %cd%
 echo [build-win] Node bin: %NODE_BIN%
+"%NODE_BIN%" -v
+if errorlevel 1 goto :fail
 echo [build-win] npm cli: %NPM_CLI%
 
-if exist "%NPM_CLI%" (
+if defined NPM_CLI (
   "%NODE_BIN%" "%NPM_CLI%" install
 ) else (
-  npm install
+  call npm install
 )
 if errorlevel 1 goto :fail
 
